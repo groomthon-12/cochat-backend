@@ -10,7 +10,7 @@ class MessageState(TypedDict):
     """
     실시간 메시지 처리 파이프라인 상태
     """
-    message_id: Optional[str]        # PostgreSQL 메시지 고유 식별자
+    message_id: str                  # 외부(API)에서 주입된 PostgreSQL 원본 메시지 식별자
     content: str                     # 발신 내용 원본
     metadata: Dict[str, Any]         # 발신자, 시간 등
     
@@ -45,12 +45,6 @@ class MemoryGCState(TypedDict):
 # ==============================================================================
 # 2. Real-time Message Assessment Graph
 # ==============================================================================
-
-def store_raw_message_postgres(state: MessageState) -> dict:
-    """메시지 원본을 PostgreSQL에 우선 안전하게 저장"""
-    # TODO: Postgres Insert 로직 구현
-    # new_id = db.insert(...)
-    return {"message_id": "pg-mock-id"}
 
 def analyze_message(state: MessageState) -> dict:
     """1차 긴급도 및 저장 가치(Summary) 판단 (LLM)"""
@@ -105,7 +99,6 @@ def check_should_store(state: MessageState) -> str:
     return "store" if state.get("should_store", False) else "end"
 
 realtime_builder = StateGraph(MessageState)
-realtime_builder.add_node("store_raw_message_postgres", store_raw_message_postgres)
 realtime_builder.add_node("analyze_message", analyze_message)
 realtime_builder.add_node("emergency_notify", emergency_notify)
 realtime_builder.add_node("retrieve_context", retrieve_context)
@@ -114,8 +107,7 @@ realtime_builder.add_node("normal_action", normal_action)
 realtime_builder.add_node("route_to_storage_decision", route_to_storage_decision)
 realtime_builder.add_node("store_vector_db", store_vector_db)
 
-realtime_builder.set_entry_point("store_raw_message_postgres")
-realtime_builder.add_edge("store_raw_message_postgres", "analyze_message")
+realtime_builder.set_entry_point("analyze_message")
 
 # 라우팅 1: 분류에 따라 흐름 분기
 realtime_builder.add_conditional_edges(
