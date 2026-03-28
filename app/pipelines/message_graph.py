@@ -12,6 +12,7 @@ class MessageState(TypedDict):
     """
     message_id: str                  # 외부(API)에서 주입된 PostgreSQL 원본 메시지 식별자
     content: str                     # 발신 내용 원본
+    conversation_history: List[Dict[str, Any]] # 메시지가 발생한 스레드의 최근 대화 맥락 (단기 기억 용도)
     metadata: Dict[str, Any]         # 발신자, 시간 등
     
     initial_urgency: str             # "Emergency", "High", "Normal", "Low", ""
