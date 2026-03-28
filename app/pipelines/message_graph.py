@@ -2,6 +2,9 @@ import datetime
 from typing import TypedDict, Optional, List, Dict, Any, Literal
 from langgraph.graph import StateGraph, END
 
+# 유틸리티 함수 임포트
+from app.pipelines.shared.retriever_utils import search_hybrid_rrf, search_cross_encoder_rerank
+
 # ==============================================================================
 # 1. State Definitions (상태 정의)
 # ==============================================================================
@@ -63,8 +66,11 @@ def analyze_message(state: MessageState) -> dict:
 
 def fast_retrieve_emergency_context(state: MessageState) -> dict:
     """[Emergency 전용] 초저지연 캐시/하이브리드 직접 검색 (Re-ranking 생략). 핵심 SOP, 치명적 오탐 로그만 조회"""
-    # TODO: BM25 및 벡터 1차 필터(ANN) 병렬 조회 (< 150ms)
-    return {"retrieved_context": ["SOP: DB 다운 시 즉시 인프라팀 호출방 전달", "오탐 피드백: 'DB 재연결 테스트' 단어는 알람 아님"]}
+    query = state.get("content", "")
+    # BM25 및 벡터 1차 필터(ANN) 병렬 조회 후 RRF 융합 수행 (< 150ms)
+    fused_docs = search_hybrid_rrf(query, top_k=2)
+    contexts = [doc.get("content", "") for doc in fused_docs]
+    return {"retrieved_context": contexts}
 
 def fast_reassess_importance(state: MessageState) -> dict:
     """가벼운/빠른 모델을 이용해 Emergency 유지 여부만 1차 확인"""
@@ -75,8 +81,16 @@ def fast_reassess_importance(state: MessageState) -> dict:
 
 def deep_retrieve_context(state: MessageState) -> dict:
     """[High/Normal 전용] 높은 정확도를 위한 다단계 재랭킹(Multiphase Ranking) 검색"""
-    # TODO: 하이브리드 검색 후 Cross-Encoder를 통한 정밀 재랭킹 적용 (< 1.5s)
-    return {"retrieved_context": ["일반 가이드라인...", "유사 피드백 광범위 분석 자료..."]}
+    query = state.get("content", "")
+    
+    # 1. 하이브리드 검색 및 RRF로 초기 후보군(Candidate Pool) 구성
+    candidates = search_hybrid_rrf(query, top_k=10)
+    
+    # 2. Cross-Encoder를 통한 2차 정밀 재랭킹 (< 1.5s)
+    reranked_docs = search_cross_encoder_rerank(candidates, query, top_k=3)
+    
+    contexts = [doc.get("content", "") for doc in reranked_docs]
+    return {"retrieved_context": contexts}
 
 def reassess_importance(state: MessageState) -> dict:
     """검색된 Context를 바탕으로 중요도 재조정"""
