@@ -16,6 +16,7 @@ class MessageState(TypedDict):
     
     initial_urgency: str             # "Emergency", "High", "Normal", "Low", ""
     retrieved_context: List[str]     # RAG 검색 결과 (과거 피드백, 문서 등)
+    judgment_rationale: str          # LLM이 도출한 응급도 판단 근거 (피드백 시 원인 분석용)
     final_urgency: str               # "Emergency", "High", "Normal", "Low", ""
     
     should_store: bool               # 임베딩/요약 저장 여부
@@ -28,6 +29,7 @@ class FeedbackState(TypedDict):
     """
     message_id: str                  # 대상 원본 메시지 식별자 (PostgreSQL)
     original_urgency: str            # 기존에 시스템이 판단했던 잘못된 중요도
+    original_rationale: str          # 기존 시스템이 오분류를 내렸던 판단 근거 (RDB 조회)
     user_corrected_urgency: str      # 사용자가 정정한 올바른 중요도
     feedback_reason: str             # (선택) 사용자가 입력한 오분류 사유
     
@@ -53,6 +55,7 @@ def analyze_message(state: MessageState) -> dict:
     return {
         "initial_urgency": "Normal", # Mock
         "final_urgency": "Normal",   # RAG를 거치지 않는 케이스를 위해 기본값 세팅
+        "judgment_rationale": "긴급한 키워드나 긴급 연락 맥락이 없으므로 Normal로 판단함.", # Mock
         "should_store": True,        # Mock
         "storable_summary": "요약된 내용..." 
     }
@@ -64,8 +67,11 @@ def retrieve_context(state: MessageState) -> dict:
 
 def reassess_importance(state: MessageState) -> dict:
     """검색된 Context를 바탕으로 중요도 재조정"""
-    # TODO: LLM으로 Context 포함시켜 final_urgency 결정 (프롬프팅)
-    return {"final_urgency": state.get("initial_urgency", "Normal")}
+    # TODO: LLM으로 Context 포함시켜 final_urgency 결정, judgment_rationale 갱신(프롬프팅)
+    return {
+        "final_urgency": state.get("initial_urgency", "Normal"),
+        "judgment_rationale": "과거 피드백 정보(유사 건)를 조회한 결과... 그러므로 기존 판단을 유지함."
+    }
 
 def route_to_storage_decision(state: MessageState) -> dict:
     """더미 노드: 분기 후 저장 결정으로 모이는 지점 (필요시 데이터 통합 등 수행)"""
