@@ -52,14 +52,10 @@ def analyze_message(state: MessageState) -> dict:
     # TODO: should_store 와 storable_summary 결정
     return {
         "initial_urgency": "Normal", # Mock
+        "final_urgency": "Normal",   # RAG를 거치지 않는 케이스를 위해 기본값 세팅
         "should_store": True,        # Mock
         "storable_summary": "요약된 내용..." 
     }
-
-def emergency_notify(state: MessageState) -> dict:
-    """Emergency 상황에 대한 즉시 알림 발송"""
-    # TODO: 슬랙 등 긴급 알림 전송 API
-    return {"final_urgency": "Emergency"}
 
 def retrieve_context(state: MessageState) -> dict:
     """과거 맥락(가이드라인 및 사용자 오분류 피드백 가이드) 검색 (RAG)"""
@@ -70,11 +66,6 @@ def reassess_importance(state: MessageState) -> dict:
     """검색된 Context를 바탕으로 중요도 재조정"""
     # TODO: LLM으로 Context 포함시켜 final_urgency 결정 (프롬프팅)
     return {"final_urgency": state.get("initial_urgency", "Normal")}
-
-def normal_action(state: MessageState) -> dict:
-    """최종 결정된 High/Normal 중요도에 따른 통상적인 액션(알림/브리핑 등)"""
-    # TODO: 후속 액션 처리 로직
-    return {}
 
 def route_to_storage_decision(state: MessageState) -> dict:
     """더미 노드: 분기 후 저장 결정으로 모이는 지점 (필요시 데이터 통합 등 수행)"""
@@ -100,10 +91,8 @@ def check_should_store(state: MessageState) -> str:
 
 realtime_builder = StateGraph(MessageState)
 realtime_builder.add_node("analyze_message", analyze_message)
-realtime_builder.add_node("emergency_notify", emergency_notify)
 realtime_builder.add_node("retrieve_context", retrieve_context)
 realtime_builder.add_node("reassess_importance", reassess_importance)
-realtime_builder.add_node("normal_action", normal_action)
 realtime_builder.add_node("route_to_storage_decision", route_to_storage_decision)
 realtime_builder.add_node("store_vector_db", store_vector_db)
 
@@ -114,17 +103,13 @@ realtime_builder.add_conditional_edges(
     "analyze_message",
     check_urgency,
     {
-        "emergency": "emergency_notify",
+        "emergency": "route_to_storage_decision",
         "high_normal": "retrieve_context",
         "low": "route_to_storage_decision"
     }
 )
 realtime_builder.add_edge("retrieve_context", "reassess_importance")
-realtime_builder.add_edge("reassess_importance", "normal_action")
-
-# 분기 병합
-realtime_builder.add_edge("emergency_notify", "route_to_storage_decision")
-realtime_builder.add_edge("normal_action", "route_to_storage_decision")
+realtime_builder.add_edge("reassess_importance", "route_to_storage_decision")
 
 # 라우팅 2: 저장 결정
 realtime_builder.add_conditional_edges(
