@@ -61,10 +61,22 @@ def analyze_message(state: MessageState) -> dict:
         "storable_summary": "요약된 내용..." 
     }
 
-def retrieve_context(state: MessageState) -> dict:
-    """과거 맥락(가이드라인 및 사용자 오분류 피드백 가이드) 검색 (RAG)"""
-    # TODO: Vector DB 검색해서 유사 안건, 과거 피드백 정보 가져오기
-    return {"retrieved_context": ["과거 사내 문서...", "피드백: 이런 유형은 High가 아님"]}
+def fast_retrieve_emergency_context(state: MessageState) -> dict:
+    """[Emergency 전용] 초저지연 캐시/하이브리드 직접 검색 (Re-ranking 생략). 핵심 SOP, 치명적 오탐 로그만 조회"""
+    # TODO: BM25 및 벡터 1차 필터(ANN) 병렬 조회 (< 150ms)
+    return {"retrieved_context": ["SOP: DB 다운 시 즉시 인프라팀 호출방 전달", "오탐 피드백: 'DB 재연결 테스트' 단어는 알람 아님"]}
+
+def fast_reassess_importance(state: MessageState) -> dict:
+    """가벼운/빠른 모델을 이용해 Emergency 유지 여부만 1차 확인"""
+    return {
+        "final_urgency": "Emergency",
+        "judgment_rationale": "SOP 대조 결과 치명적 장애로 판단. (초저지연 검증)"
+    }
+
+def deep_retrieve_context(state: MessageState) -> dict:
+    """[High/Normal 전용] 높은 정확도를 위한 다단계 재랭킹(Multiphase Ranking) 검색"""
+    # TODO: 하이브리드 검색 후 Cross-Encoder를 통한 정밀 재랭킹 적용 (< 1.5s)
+    return {"retrieved_context": ["일반 가이드라인...", "유사 피드백 광범위 분석 자료..."]}
 
 def reassess_importance(state: MessageState) -> dict:
     """검색된 Context를 바탕으로 중요도 재조정"""
@@ -98,24 +110,32 @@ def check_should_store(state: MessageState) -> str:
 
 realtime_builder = StateGraph(MessageState)
 realtime_builder.add_node("analyze_message", analyze_message)
-realtime_builder.add_node("retrieve_context", retrieve_context)
+realtime_builder.add_node("fast_retrieve_emergency_context", fast_retrieve_emergency_context)
+realtime_builder.add_node("fast_reassess_importance", fast_reassess_importance)
+realtime_builder.add_node("deep_retrieve_context", deep_retrieve_context)
 realtime_builder.add_node("reassess_importance", reassess_importance)
 realtime_builder.add_node("route_to_storage_decision", route_to_storage_decision)
 realtime_builder.add_node("store_vector_db", store_vector_db)
 
 realtime_builder.set_entry_point("analyze_message")
 
-# 라우팅 1: 분류에 따라 흐름 분기
+# 라우팅 1: 분류에 따라 계층화된 검색(Adaptive RAG) 라우팅
 realtime_builder.add_conditional_edges(
     "analyze_message",
     check_urgency,
     {
-        "emergency": "route_to_storage_decision",
-        "high_normal": "retrieve_context",
+        "emergency": "fast_retrieve_emergency_context",
+        "high_normal": "deep_retrieve_context",
         "low": "route_to_storage_decision"
     }
 )
-realtime_builder.add_edge("retrieve_context", "reassess_importance")
+
+# Emergency 분기 처리
+realtime_builder.add_edge("fast_retrieve_emergency_context", "fast_reassess_importance")
+realtime_builder.add_edge("fast_reassess_importance", "route_to_storage_decision")
+
+# High/Normal 분기 처리
+realtime_builder.add_edge("deep_retrieve_context", "reassess_importance")
 realtime_builder.add_edge("reassess_importance", "route_to_storage_decision")
 
 # 라우팅 2: 저장 결정
