@@ -297,10 +297,45 @@ memory_gc_graph = gc_builder.compile(checkpointer=memory_saver_gc)
 
 
 # ==============================================================================
+# 5. External API Wrappers (DTO 반환용 래퍼 함수)
+# ==============================================================================
+
+async def run_realtime_pipeline(initial_state: dict, config: dict = None) -> dict:
+    """[실시간 처리] 파이프라인 실행 후 API 계층에 필요한 핵심 속성만 필터링하여 리턴"""
+    full_state = await realtime_graph.ainvoke(initial_state, config=config)
+    return {
+        "message_id": full_state.get("message_id"),
+        "final_urgency": full_state.get("final_urgency"),
+        "judgment_rationale": full_state.get("judgment_rationale"),
+        "should_store": full_state.get("should_store"),
+        "storable_summary": full_state.get("storable_summary")
+    }
+
+async def run_feedback_pipeline(initial_state: dict, config: dict = None) -> dict:
+    """[피드백 처리] 파이프라인 실행 후 검증 결과 및 추출된 룰만 리턴"""
+    full_state = await feedback_graph.ainvoke(initial_state, config=config)
+    return {
+        "message_id": full_state.get("message_id"),
+        "extracted_guideline": full_state.get("extracted_guideline"),
+        "validation_result": full_state.get("validation_result")
+    }
+
+async def run_gc_pipeline(initial_state: dict, config: dict = None) -> dict:
+    """[메모리 정리] 파이프라인 실행 후 처리된 결과 목록 리턴"""
+    full_state = await memory_gc_graph.ainvoke(initial_state, config=config)
+    return {
+        "evaluation_results": full_state.get("evaluation_results", [])
+    }
+
+
+# ==============================================================================
 # EXPORTS
 # ==============================================================================
 __all__ = [
-    "realtime_graph",
+    "run_realtime_pipeline",
+    "run_feedback_pipeline",
+    "run_gc_pipeline",
+    "realtime_graph",       # LangGraph Studio/디버깅 노출용
     "feedback_graph",  
     "memory_gc_graph",
     "MessageState",
