@@ -1,0 +1,7 @@
+langgraph
+langchain
+langchain-google-genai
+psycopg2-binary
+pydantic
+fastapi
+uvicorn

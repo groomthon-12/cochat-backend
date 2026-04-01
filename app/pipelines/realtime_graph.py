@@ -1,6 +1,11 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
+from pydantic import BaseModel, Field
+from typing import Literal
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 from app.pipelines.state import MessageState
 from app.pipelines.shared.retriever_utils import search_hybrid_rrf, search_cross_encoder_rerank
 
@@ -8,16 +13,53 @@ from app.pipelines.shared.retriever_utils import search_hybrid_rrf, search_cross
 # Node Functions
 # ==============================================================================
 
+class AnalyzeMessageOutput(BaseModel):
+    """LLM이 반드시 준수해야 하는 JSON 출력 스키마"""
+    initial_urgency: Literal["Emergency", "High", "Normal", "Low"] = Field(
+        description="초기 긴급도 파악 결과. 심각한 장애는 Emergency, 직접 멘션/중요 요청은 High, 일반 알림이나 로그는 Normal, 의미없는 잡담/대답은 Low."
+    )
+    judgment_rationale: str = Field(description="선택한 긴급도에 대한 상세한 논리적 판단 근거 (Chain of Thought)")
+    should_store: bool = Field(description="의미 있는 업무 컨텍스트 혹은 중요 로그로써 추후 Vector DB에 기억할 가치가 있는가?")
+    storable_summary: str = Field(description="should_store가 True인 경우 검색용 필수 핵심 요약. False인 경우 빈 문자열.")
+
 def analyze_message(state: MessageState) -> dict:
-    """1차 긴급도 및 저장 가치(Summary) 판단 (LLM)"""
-    # TODO: LLM 호출하여 initial_urgency 결정
-    # TODO: should_store 와 storable_summary 결정
+    """1차 긴급도 및 저장 가치 판단 (Gemini Flash 사용)"""
+    
+    # 1. 모델과 파서 초기화 (실제 실행을 위해선 GOOGLE_API_KEY 환경변수 세팅 필수)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    structured_llm = llm.with_structured_output(AnalyzeMessageOutput)
+    
+    # 2. 시스템 프롬프트 설계
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "당신은 업무용 메신저(Slack/Discord) 환경의 초고속 알람 필터링 비서입니다.\n\n"
+                   "[응급도 분류 가이드라인]\n"
+                   "- Emergency: 치명적 서비스 중단, 긴급 보안 이슈 등 즉각적인 조치가 없으면 안 되는 심각한 장애.\n"
+                   "- High: 수신자(나)를 직접 멘션한 중요한 업무 요청, 빠른 확인이 필요한 이슈 및 오류 알림.\n"
+                   "- Normal: 평범한 채널의 정보성 알림, 당장 조치할 필요 없는 배포 로그, 단순 참조용 스레드.\n"
+                   "- Low: 단순 인사(안녕하세요), 동의/수긍('네 알겠습니다', '확인했습니다'), 잡담, 스팸 봇 메시지.\n\n"
+                   "제공된 메타데이터(직접 멘션 여부 등)와 단기 스레드 문맥, 그리고 메시지 본문을 가장 입체적으로 분석하여 JSON으로 반환하세요."
+        ),
+        ("user", "### 메타데이터 (채널, 발신자, 나를 멘션했는지 여부 등):\n{metadata}\n\n"
+                 "### 최근 스레드 문맥 (단기 기억):\n{history}\n\n"
+                 "### 현재 메시지 본문:\n{content}")
+    ])
+    
+    # 3. 모델 체인지업(Invocation)
+    chain = prompt | structured_llm
+    
+    result = chain.invoke({
+        "metadata": state.get("metadata", {}),
+        "history": state.get("conversation_history", []),
+        "content": state.get("content", "")
+    })
+    
+    # 4. 분석 결과 반환
     return {
-        "initial_urgency": "Normal", # Mock
-        "final_urgency": "Normal",   # RAG를 거치지 않는 케이스를 위해 기본값 세팅
-        "judgment_rationale": "긴급한 키워드나 긴급 연락 맥락이 없으므로 Normal로 판단함.", # Mock
-        "should_store": True,        # Mock
-        "storable_summary": "요약된 내용..." 
+        "initial_urgency": result.initial_urgency,
+        "final_urgency": result.initial_urgency, # RAG를 거치지 않고 끝나는 Low 케이스를 위한 예비용
+        "judgment_rationale": result.judgment_rationale,
+        "should_store": result.should_store,
+        "storable_summary": result.storable_summary 
     }
 
 def fast_retrieve_emergency_context(state: MessageState) -> dict:
