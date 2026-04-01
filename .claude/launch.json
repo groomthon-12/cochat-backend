@@ -3,9 +3,15 @@
   "configurations": [
     {
       "name": "FastAPI Dev Server",
-      "runtimeExecutable": "uvicorn",
-      "runtimeArgs": ["app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "runtimeExecutable": "D:/해커톤/cochat-backend/venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
       "port": 8000
+    },
+    {
+      "name": "Notification Worker",
+      "runtimeExecutable": "D:/해커톤/cochat-backend/venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "app.workers.notification_worker"],
+      "port": 8001
     }
   ]
 }
