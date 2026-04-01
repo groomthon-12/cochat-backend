@@ -1,6 +1,7 @@
 import datetime
 from typing import TypedDict, Optional, List, Dict, Any, Literal
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 
 # 유틸리티 함수 임포트
 from app.pipelines.shared.retriever_utils import search_hybrid_rrf, search_cross_encoder_rerank
@@ -163,7 +164,11 @@ realtime_builder.add_conditional_edges(
     }
 )
 realtime_builder.add_edge("store_vector_db", END)
-realtime_graph = realtime_builder.compile()
+
+# 로컬 테스트 및 디버깅용 MemorySaver 적용 (Time Travel, 스냅샷 기록 지원)
+# 실제 프로덕션(Postgres 연결 시)에서는 AsyncPostgresSaver 객체를 인자로 넘겨 컴파일해야 합니다.
+memory_saver_realtime = MemorySaver()
+realtime_graph = realtime_builder.compile(checkpointer=memory_saver_realtime)
 
 
 # ==============================================================================
@@ -225,7 +230,9 @@ feedback_builder.add_conditional_edges(
 )
 feedback_builder.add_edge("store_feedback_guideline", END)
 feedback_builder.add_edge("override_conflicting_guideline", END)
-feedback_graph = feedback_builder.compile()
+
+memory_saver_feedback = MemorySaver()
+feedback_graph = feedback_builder.compile(checkpointer=memory_saver_feedback)
 
 
 # ==============================================================================
@@ -256,7 +263,9 @@ gc_builder.set_entry_point("fetch_stale_memories")
 gc_builder.add_edge("fetch_stale_memories", "evaluate_memory_relevance")
 gc_builder.add_edge("evaluate_memory_relevance", "update_or_delete_vector_db")
 gc_builder.add_edge("update_or_delete_vector_db", END)
-memory_gc_graph = gc_builder.compile()
+
+memory_saver_gc = MemorySaver()
+memory_gc_graph = gc_builder.compile(checkpointer=memory_saver_gc)
 
 
 # ==============================================================================
