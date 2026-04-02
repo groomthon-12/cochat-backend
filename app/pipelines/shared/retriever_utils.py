@@ -1,4 +1,7 @@
+import os
 from typing import List, Dict, Any
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_postgres.vectorstores import PGVector
 
 def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
     """
@@ -43,25 +46,48 @@ def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[s
     return fused_results
 
 
-def search_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-    """하이브리드 검색 및 RRF 병합 수행 유틸리티 (실제 구현 시 Async I/O 권장)"""
+async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """하이브리드 검색 및 RRF 병합 수행 유틸리티 (실제 PostgreSQL pgvector 연결)"""
     
-    # TODO: 1. Vector DB (Dense) 검색 실행
-    # dense_results = db.search_dense(query)
-    dense_mock = [
-        {"id": "doc_A", "content": "일반 DB 장애 조치 가이드"},
-        {"id": "doc_B", "content": "에러 로그 모니터링 메뉴얼"}
-    ]
+    # 1. DB 환경변수 준비 (langchain-postgres 접속용 URI로 포맷 변환)
+    # 로컬 테스트용 기본값 제공
+    db_url = os.getenv("DATABASE_URL", "postgresql://cochat:cochat_dev@localhost:5432/cochat")
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg://")
+    elif db_url.startswith("postgresql+asyncpg://"):
+        db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+        
+    # 2. 임베딩 모델 초기화 (검색 텍스트를 벡터로 변환)
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     
-    # TODO: 2. BM25 DB (Sparse) 검색 실행 (밀집 벡터와 병렬로 실행하면 빠름)
-    # sparse_results = db.search_bm25(query)
-    sparse_mock = [
-        {"id": "doc_C", "content": "Error 221 치명적 로그 피드백 지침"},  # 정확한 키워드 매칭은 Sparse가 잘 잡음!
-        {"id": "doc_A", "content": "일반 DB 장애 조치 가이드"}
-    ]
+    try:
+        # 3. Vector DB 커넥션 및 Dense Search
+        vector_store = PGVector(
+            embeddings=embeddings,
+            collection_name="message_guidelines",
+            connection=db_url,
+            use_jsonb=True,
+        )
+        
+        # 비동기 검색 (Dense)
+        dense_docs = await vector_store.asimilarity_search_with_score(query, k=10)
+        dense_results = [
+            {"id": str(doc.metadata.get("id", i)), "content": doc.page_content, "score": score} 
+            for i, (doc, score) in enumerate(dense_docs)
+        ]
+    except Exception as e:
+        print(f"⚠️ Vector DB 조회 실패 (테이블이 비어있거나 생성되지 않음): {e}")
+        dense_results = []
     
-    # 3. RRF 병합
-    fused_results = compute_rrf(dense_mock, sparse_mock)
+    # 4. 희소(Sparse/BM25) 검색
+    # TODO: Postgres Full-Text Search(to_tsvector) 또는 로컬 ElasticSearch 연동
+    sparse_results = []
+    
+    # 5. RRF 융합 로직 태우기
+    if not dense_results and not sparse_results:
+        return []
+        
+    fused_results = compute_rrf(dense_results, sparse_results)
     
     return fused_results[:top_k]
 

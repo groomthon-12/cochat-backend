@@ -7,7 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.pipelines.state import MessageState
-from app.pipelines.shared.retriever_utils import search_hybrid_rrf, search_cross_encoder_rerank
+from app.pipelines.shared.retriever_utils import asearch_hybrid_rrf, search_cross_encoder_rerank
 
 # ==============================================================================
 # Node Functions
@@ -62,11 +62,11 @@ def analyze_message(state: MessageState) -> dict:
         "storable_summary": result.storable_summary 
     }
 
-def fast_retrieve_emergency_context(state: MessageState) -> dict:
+async def fast_retrieve_emergency_context(state: MessageState) -> dict:
     """[Emergency 전용] 초저지연 캐시/하이브리드 직접 검색 (Re-ranking 생략). 핵심 SOP, 치명적 오탐 로그만 조회"""
     query = state.get("content", "")
-    # BM25 및 벡터 1차 필터(ANN) 병렬 조회 후 RRF 융합 수행 (< 150ms)
-    fused_docs = search_hybrid_rrf(query, top_k=2)
+    # 비동기 pgvector 검색 수행 (< 150ms)
+    fused_docs = await asearch_hybrid_rrf(query, top_k=2)
     contexts = [doc.get("content", "") for doc in fused_docs]
     return {"retrieved_context": contexts}
 
@@ -77,12 +77,12 @@ def fast_reassess_importance(state: MessageState) -> dict:
         "judgment_rationale": "SOP 대조 결과 치명적 장애로 판단. (초저지연 검증)"
     }
 
-def deep_retrieve_context(state: MessageState) -> dict:
+async def deep_retrieve_context(state: MessageState) -> dict:
     """[High/Normal 전용] 높은 정확도를 위한 다단계 재랭킹(Multiphase Ranking) 검색"""
     query = state.get("content", "")
     
-    # 1. 하이브리드 검색 및 RRF로 초기 후보군(Candidate Pool) 구성
-    candidates = search_hybrid_rrf(query, top_k=10)
+    # 1. 비동기 하이브리드 검색 및 RRF로 초기 후보군(Candidate Pool) 구성
+    candidates = await asearch_hybrid_rrf(query, top_k=10)
     
     # 2. Cross-Encoder를 통한 2차 정밀 재랭킹 (< 1.5s)
     reranked_docs = search_cross_encoder_rerank(candidates, query, top_k=3)

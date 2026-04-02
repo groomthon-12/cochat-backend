@@ -5,3 +5,6 @@ psycopg2-binary
 pydantic
 fastapi
 uvicorn
+langchain-postgres
+psycopg[binary]
+psycopg-pool
