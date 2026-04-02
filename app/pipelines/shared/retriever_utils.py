@@ -37,8 +37,14 @@ async def astore_document_to_vector_db(content: str, metadata: dict = None) -> b
         
     try:
         vector_store = _get_vector_store()
-        doc = Document(page_content=content, metadata=metadata or {})
-        await vector_store.aadd_documents([doc])
+        meta = metadata or {}
+        doc = Document(page_content=content, metadata=meta)
+        
+        # message_id가 있으면 명시적 id 리스트 생성 (Upsert로 동작하게 됨)
+        msg_id = meta.get("message_id")
+        doc_ids = [str(msg_id)] if msg_id else None
+        
+        await vector_store.aadd_documents([doc], ids=doc_ids)
         return True
     except Exception as e:
         print(f"⚠️ Vector DB 저장 실패: {e}")
