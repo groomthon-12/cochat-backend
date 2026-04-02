@@ -1,7 +1,48 @@
 import os
 from typing import List, Dict, Any
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_core.documents import Document
 from langchain_postgres.vectorstores import PGVector
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+
+_async_engine: AsyncEngine = None
+
+def _get_async_engine() -> AsyncEngine:
+    global _async_engine
+    if _async_engine is None:
+        db_url = os.getenv("DATABASE_URL", "postgresql://cochat:cochat_dev@localhost:5432/cochat")
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        elif db_url.startswith("postgresql+asyncpg://"):
+            db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+        _async_engine = create_async_engine(db_url)
+    return _async_engine
+
+def _get_vector_store() -> PGVector:
+    """공용 PGVector 인스턴스 반환 함수"""
+    engine = _get_async_engine()
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    
+    return PGVector(
+        embeddings=embeddings,
+        collection_name="message_guidelines",
+        connection=engine,
+        use_jsonb=True,
+    )
+
+async def astore_document_to_vector_db(content: str, metadata: dict = None) -> bool:
+    """텍스트 내용을 Vector DB에 삽입 (비동기)"""
+    if not content:
+        return False
+        
+    try:
+        vector_store = _get_vector_store()
+        doc = Document(page_content=content, metadata=metadata or {})
+        await vector_store.aadd_documents([doc])
+        return True
+    except Exception as e:
+        print(f"⚠️ Vector DB 저장 실패: {e}")
+        return False
 
 def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
     """
@@ -48,26 +89,9 @@ def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[s
 
 async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """하이브리드 검색 및 RRF 병합 수행 유틸리티 (실제 PostgreSQL pgvector 연결)"""
-    
-    # 1. DB 환경변수 준비 (langchain-postgres 접속용 URI로 포맷 변환)
-    # 로컬 테스트용 기본값 제공
-    db_url = os.getenv("DATABASE_URL", "postgresql://cochat:cochat_dev@localhost:5432/cochat")
-    if db_url.startswith("postgresql://"):
-        db_url = db_url.replace("postgresql://", "postgresql+psycopg://")
-    elif db_url.startswith("postgresql+asyncpg://"):
-        db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-        
-    # 2. 임베딩 모델 초기화 (검색 텍스트를 벡터로 변환)
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    
     try:
-        # 3. Vector DB 커넥션 및 Dense Search
-        vector_store = PGVector(
-            embeddings=embeddings,
-            collection_name="message_guidelines",
-            connection=db_url,
-            use_jsonb=True,
-        )
+        # 공통 함수로 Vector DB 커넥션 획득
+        vector_store = _get_vector_store()
         
         # 비동기 검색 (Dense)
         dense_docs = await vector_store.asimilarity_search_with_score(query, k=10)

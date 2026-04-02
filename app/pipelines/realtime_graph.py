@@ -102,9 +102,19 @@ def route_to_storage_decision(state: MessageState) -> dict:
     """더미 노드: 분기 후 저장 결정으로 모이는 지점 (필요시 데이터 통합 등 수행)"""
     return {}
 
-def store_vector_db(state: MessageState) -> dict:
+async def store_vector_db(state: MessageState) -> dict:
     """(should_store=True) 임베딩하여 Vector DB에 장기 기억으로 저장"""
-    # TODO: state["storable_summary"] 임베딩 후 벡터 DB 삽입
+    summary = state.get("storable_summary")
+    if summary:
+        from app.pipelines.shared.retriever_utils import astore_document_to_vector_db
+        await astore_document_to_vector_db(
+            content=summary, 
+            metadata={
+                "message_id": state.get("message_id"), 
+                "urgency": state.get("final_urgency"),
+                "source": "realtime_summary"
+            }
+        )
     return {}
 
 # ==============================================================================

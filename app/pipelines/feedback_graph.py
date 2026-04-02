@@ -28,9 +28,18 @@ def override_conflicting_guideline(state: FeedbackState) -> dict:
     # TODO: Vector DB에서 충돌의 원인이 된 과거 가이드라인을 삭제(Delete)하고, 이번 신규 가이드라인을 강제 Insert
     return {}
 
-def store_feedback_guideline(state: FeedbackState) -> dict:
-    """검증을 통과한 가이드라인을 RAG 컨텍스트 생성을 위해 Vector DB에 신규 Insert 혹은 Merge(Update) 수행"""
-    # TODO: Vector DB 등에 Insert 또는 Update
+async def store_feedback_guideline(state: FeedbackState) -> dict:
+    """검증을 통과한 가이드라인을 RAG 컨텍스트 생성을 위해 Vector DB에 신규 Insert 수행"""
+    guideline = state.get("extracted_guideline")
+    if guideline:
+        from app.pipelines.shared.retriever_utils import astore_document_to_vector_db
+        await astore_document_to_vector_db(
+            content=guideline,
+            metadata={
+                "message_id": state.get("message_id"),
+                "source": "user_feedback_guideline"
+            }
+        )
     return {}
 
 # ==============================================================================
