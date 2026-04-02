@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -18,7 +18,6 @@ class Briefing(Base):
         nullable=False,
     )
     content = Column(Text, nullable=False)
-    highlights = Column(JSONB, nullable=True)
     generated_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -26,3 +25,8 @@ class Briefing(Base):
     )
 
     session = relationship("FocusSession", back_populates="briefings")
+    notifications = relationship(
+        "Notification",
+        secondary="briefing_notifications",
+        back_populates="briefings",
+    )

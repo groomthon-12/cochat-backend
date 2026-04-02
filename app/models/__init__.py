@@ -1,4 +1,5 @@
 from app.models.briefing import Briefing
+from app.models.briefing_notification import BriefingNotification
 from app.models.feedback_report import FeedbackReport
 from app.models.focus_session import FocusSession
 from app.models.integration_account import IntegrationAccount
@@ -13,5 +14,6 @@ __all__ = [
     "Notification",
     "FocusSession",
     "Briefing",
+    "BriefingNotification",
     "FeedbackReport",
 ]

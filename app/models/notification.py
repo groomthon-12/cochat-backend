@@ -48,3 +48,8 @@ class Notification(Base):
     integration = relationship("IntegrationAccount", backref="notifications")
     raw_event = relationship("RawEvent", back_populates="notifications")
     feedback_reports = relationship("FeedbackReport", back_populates="notification")
+    briefings = relationship(
+        "Briefing",
+        secondary="briefing_notifications",
+        back_populates="notifications",
+    )
