@@ -28,13 +28,21 @@ class NotificationEvent(BaseModel):
     payload: dict[str, Any] = Field(
         description="플랫폼에서 수신한 원본 JSON 데이터",
     )
-    actor: str | None = Field(
+    sender_name: str | None = Field(
         default=None,
         description="알림 발신자 이름. 알 수 없는 경우 None",
     )
-    channel: str | None = Field(
+    channel_name: str | None = Field(
         default=None,
         description="알림이 발생한 채널명. DM인 경우 None",
+    )
+    is_broadcast: bool = Field(
+        default=False,
+        description="@everyone, @here 등 전체 공지성 메시지 여부",
+    )
+    has_attachments: bool = Field(
+        default=False,
+        description="첨부파일 또는 Embed 포함 여부",
     )
     received_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
