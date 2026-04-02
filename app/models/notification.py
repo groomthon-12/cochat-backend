@@ -37,9 +37,7 @@ class Notification(Base):
     priority = Column(String, nullable=True)
     priority_score = Column(Float, nullable=True)
     summary = Column(Text, nullable=True)
-    requires_decision = Column(Boolean, nullable=False, default=False)
     reason = Column(Text, nullable=True)
-    suggested_action = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="unread")
     created_at = Column(
         DateTime(timezone=True),
