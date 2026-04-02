@@ -1,8 +1,6 @@
-import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -11,14 +9,14 @@ from app.models.base import Base
 class Notification(Base):
     __tablename__ = "notifications"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     integration_id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         ForeignKey("integration_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
     raw_event_id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         ForeignKey("raw_events.id", ondelete="SET NULL"),
         nullable=True,
     )

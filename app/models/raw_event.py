@@ -1,8 +1,7 @@
-import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -11,10 +10,10 @@ from app.models.base import Base
 class RawEvent(Base):
     __tablename__ = "raw_events"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     provider = Column(String, nullable=False)
     integration_id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         ForeignKey("integration_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Literal
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -19,11 +18,11 @@ class NotificationEvent(BaseModel):
     provider: ProviderType = Field(
         description="원본 플랫폼 이름 (slack | jira | discord | gmail)",
     )
-    integration_id: UUID = Field(
-        description="연동 계정을 식별하는 UUID",
+    integration_id: int = Field(
+        description="연동 계정을 식별하는 ID",
     )
-    raw_event_id: UUID = Field(
-        description="원본 웹훅 이벤트 레코드를 참조하는 UUID",
+    raw_event_id: int = Field(
+        description="원본 웹훅 이벤트 레코드를 참조하는 ID",
     )
     payload: dict[str, Any] = Field(
         description="플랫폼에서 수신한 원본 JSON 데이터",

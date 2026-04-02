@@ -1,7 +1,4 @@
-import uuid
-
-from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, Column, ForeignKey, Index, UniqueConstraint
 
 from app.models.base import Base
 
@@ -9,14 +6,14 @@ from app.models.base import Base
 class BriefingNotification(Base):
     __tablename__ = "briefing_notifications"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     briefing_id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         ForeignKey("briefings.id", ondelete="CASCADE"),
         nullable=False,
     )
     notification_id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         ForeignKey("notifications.id", ondelete="CASCADE"),
         nullable=False,
     )

@@ -1,8 +1,6 @@
-import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -11,9 +9,9 @@ from app.models.base import Base
 class Briefing(Base):
     __tablename__ = "briefings"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     session_id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         ForeignKey("focus_sessions.id", ondelete="CASCADE"),
         nullable=False,
     )
