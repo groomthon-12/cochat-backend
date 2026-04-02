@@ -21,7 +21,7 @@ def _get_async_engine() -> AsyncEngine:
 def _get_vector_store() -> PGVector:
     """공용 PGVector 인스턴스 반환 함수"""
     engine = _get_async_engine()
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
     
     return PGVector(
         embeddings=embeddings,
