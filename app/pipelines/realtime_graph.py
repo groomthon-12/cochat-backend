@@ -22,6 +22,12 @@ class AnalyzeMessageOutput(BaseModel):
     should_store: bool = Field(description="의미 있는 업무 컨텍스트 혹은 중요 로그로써 추후 Vector DB에 기억할 가치가 있는가?")
     storable_summary: str = Field(description="should_store가 True인 경우 검색용 필수 핵심 요약. False인 경우 빈 문자열.")
 
+class ReassessOutput(BaseModel):
+    final_urgency: Literal["Emergency", "High", "Normal", "Low"] = Field(
+        description="RAG로 검색된 사내 가이드라인 문맥을 바탕으로 도출된 최종 긴급도"
+    )
+    judgment_rationale: str = Field(description="긴급도를 이와 같이 판단하게 된 이유 혹은 변경 사유 (핵심만 간결하게)")
+
 def analyze_message(state: MessageState) -> dict:
     """1차 긴급도 및 저장 가치 판단 (Gemini Flash 사용)"""
     
@@ -70,11 +76,44 @@ async def fast_retrieve_emergency_context(state: MessageState) -> dict:
     contexts = [doc.get("content", "") for doc in fused_docs]
     return {"retrieved_context": contexts}
 
-def fast_reassess_importance(state: MessageState) -> dict:
-    """가벼운/빠른 모델을 이용해 Emergency 유지 여부만 1차 확인"""
+async def reassess_importance(state: MessageState) -> dict:
+    """RAG 문맥 바탕 2차 검증 로직 (통합 노드)"""
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    structured_llm = llm.with_structured_output(ReassessOutput)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "당신은 기업용 메신저의 메시지 중요도 심사위원입니다.\n"
+                   "이전에 AI 1차 평가 모델이 초기 긴급도(initial_urgency)를 부여했습니다.\n"
+                   "지금 우리는 회사의 관련 SOP나 과거 지침(Context)을 검색해 왔습니다.\n"
+                   "검색된 문맥 정보에 비추어 볼 때, 이전 평가 모델의 판정이 올바른지 다시 평가하고 최종 긴급도(final_urgency)를 도출하세요.\n"
+                   "만약 사내 지침에서 이 상황을 '중요하지 않다'거나 '무시해도 좋다'고 명시했다면 Low나 Normal로 낮추어야 합니다.\n"
+                   "별다른 지침 위반이 없다면 1차 긴급도를 그대로 유지하세요."
+        ),
+        ("user", "### 메타데이터 (채널, 나를 멘션했는지 여부 등):\n{metadata}\n\n"
+                 "### 최근 스레드 문맥 (단기 기억):\n{history}\n\n"
+                 "### 메시지 본문:\n{content}\n\n"
+                 "### [1차 평가 결과]\n- 1차 산출 긴급도: {initial_urgency}\n- 1차 판단 근거: {judgment_rationale}\n\n"
+                 "### [검색된 사내 가이드라인 (RAG Context)]\n{retrieved_context}"
+        )
+    ])
+    
+    chain = prompt | structured_llm
+    
+    retrieved_context = state.get("retrieved_context", [])
+    context_str = "\n".join(retrieved_context) if retrieved_context else "검색된 문맥이 없습니다."
+    
+    response = await chain.ainvoke({
+        "metadata": state.get("metadata", {}),
+        "history": state.get("conversation_history", []),
+        "content": state.get("content", ""),
+        "initial_urgency": state.get("initial_urgency", "Normal"),
+        "judgment_rationale": state.get("judgment_rationale", ""),
+        "retrieved_context": context_str
+    })
+    
     return {
-        "final_urgency": "Emergency",
-        "judgment_rationale": "SOP 대조 결과 치명적 장애로 판단. (초저지연 검증)"
+        "final_urgency": response.final_urgency,
+        "judgment_rationale": response.judgment_rationale
     }
 
 async def deep_retrieve_context(state: MessageState) -> dict:
@@ -89,14 +128,6 @@ async def deep_retrieve_context(state: MessageState) -> dict:
     
     contexts = [doc.get("content", "") for doc in reranked_docs]
     return {"retrieved_context": contexts}
-
-def reassess_importance(state: MessageState) -> dict:
-    """검색된 Context를 바탕으로 중요도 재조정"""
-    # TODO: LLM으로 Context 포함시켜 final_urgency 결정, judgment_rationale 갱신(프롬프팅)
-    return {
-        "final_urgency": state.get("initial_urgency", "Normal"),
-        "judgment_rationale": "과거 피드백 정보(유사 건)를 조회한 결과... 그러므로 기존 판단을 유지함."
-    }
 
 def route_to_storage_decision(state: MessageState) -> dict:
     """더미 노드: 분기 후 저장 결정으로 모이는 지점 (필요시 데이터 통합 등 수행)"""
@@ -141,7 +172,6 @@ def check_should_store(state: MessageState) -> str:
 realtime_builder = StateGraph(MessageState)
 realtime_builder.add_node("analyze_message", analyze_message)
 realtime_builder.add_node("fast_retrieve_emergency_context", fast_retrieve_emergency_context)
-realtime_builder.add_node("fast_reassess_importance", fast_reassess_importance)
 realtime_builder.add_node("deep_retrieve_context", deep_retrieve_context)
 realtime_builder.add_node("reassess_importance", reassess_importance)
 realtime_builder.add_node("route_to_storage_decision", route_to_storage_decision)
@@ -160,12 +190,11 @@ realtime_builder.add_conditional_edges(
     }
 )
 
-# Emergency 분기 처리
-realtime_builder.add_edge("fast_retrieve_emergency_context", "fast_reassess_importance")
-realtime_builder.add_edge("fast_reassess_importance", "route_to_storage_decision")
-
-# High/Normal 분기 처리
+# 검색 완료 후 통합된 단일 재평가(Reassess) 노드로 융합 (DAG 형태)
+realtime_builder.add_edge("fast_retrieve_emergency_context", "reassess_importance")
 realtime_builder.add_edge("deep_retrieve_context", "reassess_importance")
+
+# 재평가 완료 후 저장 결정 로직으로 이동
 realtime_builder.add_edge("reassess_importance", "route_to_storage_decision")
 
 # 라우팅 2: 저장 결정
