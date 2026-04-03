@@ -1,0 +1,40 @@
+# Byte-compiled and optimized files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE and tool specific files
+.idea/
+.vscode/
+.claude/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+
+# Local settings and secrets
+.env
+*.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+.claude/

@@ -1,0 +1,20 @@
+# Web Framework & Core
+fastapi
+uvicorn[standard]
+pydantic>=2.0.0
+pydantic-settings
+
+# AI Pipeline [cite: 16]
+anthropic
+langgraph
+langchain-anthropic
+
+# Integrations [cite: 16]
+slack_bolt
+
+# Database & Cache [cite: 177, 181]
+sqlalchemy
+asyncpg
+pgvector
+redis
+alembic
