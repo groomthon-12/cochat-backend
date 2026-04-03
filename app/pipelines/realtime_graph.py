@@ -111,9 +111,20 @@ async def reassess_importance(state: MessageState) -> dict:
         "retrieved_context": context_str
     })
     
+    final_urgency = response.final_urgency
+    judgment_rationale = response.judgment_rationale
+    should_store = state.get("should_store", False)
+    storable_summary = state.get("storable_summary", "")
+    
+    # RAG 재평가 후 긴급도가 낮아지면 저장 플래그 무효화
+    if final_urgency == "Low":
+        should_store = False
+        
     return {
-        "final_urgency": response.final_urgency,
-        "judgment_rationale": response.judgment_rationale
+        "final_urgency": final_urgency,
+        "judgment_rationale": judgment_rationale,
+        "should_store": should_store,
+        "storable_summary": storable_summary.strip()
     }
 
 async def deep_retrieve_context(state: MessageState) -> dict:
@@ -128,10 +139,6 @@ async def deep_retrieve_context(state: MessageState) -> dict:
     
     contexts = [doc.get("content", "") for doc in reranked_docs]
     return {"retrieved_context": contexts}
-
-def route_to_storage_decision(state: MessageState) -> dict:
-    """더미 노드: 분기 후 저장 결정으로 모이는 지점 (필요시 데이터 통합 등 수행)"""
-    return {}
 
 async def store_vector_db(state: MessageState) -> dict:
     """(should_store=True) 임베딩하여 Vector DB에 장기 기억으로 저장"""
@@ -159,7 +166,7 @@ def check_urgency(state: MessageState) -> str:
     elif urgency in ["High", "Normal"]:
          return "high_normal"
     else:
-         return "low"
+         return "low_store" if state.get("should_store", False) else "low_end"
 
 def check_should_store(state: MessageState) -> str:
     return "store" if state.get("should_store", False) else "end"
@@ -174,7 +181,6 @@ realtime_builder.add_node("analyze_message", analyze_message)
 realtime_builder.add_node("fast_retrieve_emergency_context", fast_retrieve_emergency_context)
 realtime_builder.add_node("deep_retrieve_context", deep_retrieve_context)
 realtime_builder.add_node("reassess_importance", reassess_importance)
-realtime_builder.add_node("route_to_storage_decision", route_to_storage_decision)
 realtime_builder.add_node("store_vector_db", store_vector_db)
 
 realtime_builder.set_entry_point("analyze_message")
@@ -186,20 +192,18 @@ realtime_builder.add_conditional_edges(
     {
         "emergency": "fast_retrieve_emergency_context",
         "high_normal": "deep_retrieve_context",
-        "low": "route_to_storage_decision"
+        "low_store": "store_vector_db",
+        "low_end": END
     }
 )
 
-# 검색 완료 후 통합된 단일 재평가(Reassess) 노드로 융합 (DAG 형태)
+# 조기 종료 분기를 제외한 나머지(RAG 분기들)는 재평가 노드로 수렴
 realtime_builder.add_edge("fast_retrieve_emergency_context", "reassess_importance")
 realtime_builder.add_edge("deep_retrieve_context", "reassess_importance")
 
-# 재평가 완료 후 저장 결정 로직으로 이동
-realtime_builder.add_edge("reassess_importance", "route_to_storage_decision")
-
-# 라우팅 2: 저장 결정
+# 재평가(Reassess) 후에는 바로 조건부 엣지로 저장 여부 결정 및 분기
 realtime_builder.add_conditional_edges(
-    "route_to_storage_decision",
+    "reassess_importance",
     check_should_store,
     {
         "store": "store_vector_db",
