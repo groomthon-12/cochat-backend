@@ -1,0 +1,32 @@
+# Web Framework & Core
+fastapi
+uvicorn[standard]
+pydantic>=2.0.0
+pydantic-settings
+
+# AI Pipeline
+anthropic
+langgraph
+langchain
+langchain-anthropic
+langchain-google-genai
+google-genai
+langchain-postgres
+
+# Integrations
+slack_bolt
+discord.py>=2.3.0
+httpx
+
+# Database & Cache
+sqlalchemy
+greenlet
+asyncpg
+pgvector
+redis
+alembic
+psycopg2-binary
+psycopg[binary]
+psycopg-pool
+torch
+sentence-transformers

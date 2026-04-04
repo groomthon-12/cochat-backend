@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --platform linux/amd64 -t cochat-backend:ci .
+
+  notify:
+    name: Discord 알림
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CI 성공
+        if: ${{ !contains(needs.*.result, 'failure') }}
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          nodetail: true
+          title: "CoChat Backend CI"
+          description: |
+            ✅ **CI 통과**
+
+            📦 `${{ github.repository }}`
+            🌿 `${{ github.ref_name }}` ← `${{ github.actor }}`
+            💬 ${{ github.event.head_commit.message }}
+
+            🔗 [GitHub](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+          color: 0x57f287
+
+      - name: CI 실패
+        if: ${{ contains(needs.*.result, 'failure') }}
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          nodetail: true
+          title: "CoChat Backend CI"
+          description: |
+            ❌ **CI 실패**
+
+            📦 `${{ github.repository }}`
+            🌿 `${{ github.ref_name }}` ← `${{ github.actor }}`
+            💬 ${{ github.event.head_commit.message }}
+
+            🔗 [GitHub](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) | [로그](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: 0xff0000
