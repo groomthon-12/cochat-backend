@@ -26,7 +26,7 @@ def list_integrations():
 @router.get("/integrations/slack/oauth-url")
 def get_slack_oauth_url():
     """Return the Slack OAuth installation URL."""
-    scopes = "channels:history,channels:read,chat:write,groups:read,im:history,im:read,mpim:read,users:read"
+    scopes = "channels:history,channels:read,chat:write,im:history,im:read,users:read"
     params = urlencode({
         "client_id": settings.SLACK_CLIENT_ID,
         "scope": scopes,
