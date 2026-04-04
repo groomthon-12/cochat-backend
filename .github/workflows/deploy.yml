@@ -45,14 +45,41 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+      - name: 최신 태스크 정의 가져오기
+        id: get-task-def
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $TASK_DEFINITION \
+            --query 'taskDefinition' \
+            --output json > task-def.json
+          echo "Task definition saved"
+
+      - name: 태스크 정의에 새 이미지 반영
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: 새 태스크 정의 등록
+        id: register-task-def
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.render-task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "task-def-arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "Registered: $TASK_DEF_ARN"
+
       - name: DB 마이그레이션 (ECS one-off task)
         run: |
           TASK_ARN=$(aws ecs run-task \
             --cluster $ECS_CLUSTER \
-            --task-definition $TASK_DEFINITION \
+            --task-definition ${{ steps.register-task-def.outputs.task-def-arn }} \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.ECS_SUBNET_ID }}],securityGroups=[${{ secrets.ECS_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"image\":\"${{ steps.build-image.outputs.image }}\",\"command\":[\"sh\",\"-c\",\"alembic upgrade head\"]}]}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"sh\",\"-c\",\"alembic upgrade head\"]}]}" \
             --region $AWS_REGION \
             --query 'tasks[0].taskArn' \
             --output text)
@@ -76,23 +103,6 @@ jobs:
             exit 1
           fi
           echo "Migration completed successfully"
-
-      - name: 최신 태스크 정의 가져오기
-        id: get-task-def
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition $TASK_DEFINITION \
-            --query 'taskDefinition' \
-            --output json > task-def.json
-          echo "Task definition saved"
-
-      - name: 태스크 정의에 새 이미지 반영
-        id: render-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-def.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
 
       - name: ECS 서비스 배포
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
