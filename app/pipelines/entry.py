@@ -4,7 +4,10 @@ from app.integrations.normalizer import NotificationEvent
 from app.models.notification import Notification
 from app.pipelines.state import MessageState
 from app.pipelines.realtime_graph import realtime_graph
-from app.core.redis_manager import fetch_short_term_memory, add_to_short_term_memory
+from app.core.redis_manager import (
+    fetch_short_term_memory, add_to_short_term_memory,
+    acquire_message_lock, mark_message_as_processed
+)
 
 async def run_pipeline_with_memory(event: NotificationEvent) -> Notification:
     """
@@ -13,8 +16,14 @@ async def run_pipeline_with_memory(event: NotificationEvent) -> Notification:
     마지막에 이번 메시지를 다시 단기기억 버퍼에 추가하는 전방위 진입점입니다.
     
     분석이 끝나면 RDB에 즉시 삽입 가능한 Notification (SQLAlchemy Model) 
-    객체로 반환합니다.
+    객체로 반환합니다. 만약 중복 메시지일 경우 None을 반환합니다.
     """
+    
+    # 0. 중복 웹훅/동시대발성 중복 파이프라인 진입 차단 (Idempotency)
+    is_first = await acquire_message_lock(event.provider_object_id)
+    if not is_first:
+        print(f"⚠️ 중복 메시지 진입 차단 (Lock) - 빠른 종료 (ID: {event.provider_object_id})")
+        return None
     
     # 1. 단기기억(Conversation History) 확보
     channel_id = event.channel_id
@@ -93,6 +102,9 @@ async def run_pipeline_with_memory(event: NotificationEvent) -> Notification:
         summary=final_state.get("storable_summary"),
         reason=final_state.get("judgment_rationale")
     )
+    
+    # 7. 처리가 완전히 종료되었음을 마킹 (24시간 동안 재진입 방지)
+    await mark_message_as_processed(event.provider_object_id)
     
     # 라우터에서 session.add() 하도록 반환
     return notification_db_model

@@ -16,6 +16,34 @@ def get_redis_client():
         _redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     return _redis_client
 
+async def acquire_message_lock(message_id: str, timeout_seconds: int = 60) -> bool:
+    """
+    동일한 메시지(provider_object_id)에 대해 중복 처리를 방어하는 분산 락을 획득합니다.
+    성공 시 True, 이미 처리중이거나 처리완료 상태라면 False를 반환합니다.
+    """
+    if not message_id:
+        return True # ID가 없는 예외 케이스는 그냥 통과
+        
+    client = get_redis_client()
+    lock_key = f"lock:msg:{message_id}"
+    
+    # nx=True 는 "이 키가 없을 때만 SET 한다"는 뜻으로, 완벽한 원자적(Atomic) Lock 기능을 수행합니다.
+    # timeout_seconds를 주동적으로 걸어두어, 파이프라인 중단 시 영원히 데드락에 빠지는 것을 방지합니다.
+    is_acquired = await client.set(lock_key, "processing", nx=True, ex=timeout_seconds)
+    return bool(is_acquired)
+
+async def mark_message_as_processed(message_id: str) -> None:
+    """
+    파이프라인이 정상적으로 끝난 메시지는 락을 해제하는 대신 '완료' 상태로 덮어씌우고
+    아주 긴 만료시간(예: 1일)을 부여해 완전한 멱등성(Idempotency)을 보장합니다.
+    """
+    if not message_id:
+        return
+        
+    client = get_redis_client()
+    lock_key = f"lock:msg:{message_id}"
+    await client.set(lock_key, "done", ex=86400) # 24시간 동안 재진입 철통 방어
+
 async def add_to_short_term_memory(channel_id: str, message: str, limit: int = 50) -> None:
     """
     특정 채널의 Redis 단기 기억 버퍼에 새 메시지를 추가합니다.
