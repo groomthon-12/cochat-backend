@@ -184,6 +184,8 @@ async def slack_oauth_callback(
             provider="slack",
             account_identifier=account_identifier,
             account_name=team_name,
+            slack_team_id=team_id,
+            slack_user_id=slack_user_id,
         )
         await upsert_token(
             db=db,
@@ -222,6 +224,8 @@ async def get_slack_connection(
                 "integration_id": integration.id,
                 "account_identifier": integration.account_identifier,
                 "account_name": integration.account_name,
+                "slack_team_id": integration.slack_team_id,
+                "slack_user_id": integration.slack_user_id,
                 "status": integration.status,
             }
             for integration in integrations

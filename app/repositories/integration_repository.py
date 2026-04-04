@@ -43,15 +43,23 @@ async def get_or_create_user_integration(
     provider: str,
     account_identifier: str,
     account_name: str,
+    slack_team_id: str | None = None,
+    slack_user_id: str | None = None,
 ) -> IntegrationAccount:
     """Get or create an integration owned by an application user."""
-    result = await db.execute(
-        select(IntegrationAccount).where(
-            IntegrationAccount.user_id == user_id,
-            IntegrationAccount.provider == provider,
-            IntegrationAccount.account_identifier == account_identifier,
-        )
+    stmt = select(IntegrationAccount).where(
+        IntegrationAccount.user_id == user_id,
+        IntegrationAccount.provider == provider,
     )
+    if slack_team_id and slack_user_id:
+        stmt = stmt.where(
+            IntegrationAccount.slack_team_id == slack_team_id,
+            IntegrationAccount.slack_user_id == slack_user_id,
+        )
+    else:
+        stmt = stmt.where(IntegrationAccount.account_identifier == account_identifier)
+
+    result = await db.execute(stmt)
     integration = result.scalar_one_or_none()
 
     if integration is None:
@@ -60,13 +68,18 @@ async def get_or_create_user_integration(
             provider=provider,
             account_identifier=account_identifier,
             account_name=account_name,
+            slack_team_id=slack_team_id,
+            slack_user_id=slack_user_id,
             status="active",
         )
         db.add(integration)
         await db.flush()
         return integration
 
+    integration.account_identifier = account_identifier
     integration.account_name = account_name
+    integration.slack_team_id = slack_team_id
+    integration.slack_user_id = slack_user_id
     integration.status = "active"
     return integration
 
