@@ -4,17 +4,23 @@ uvicorn[standard]
 pydantic>=2.0.0
 pydantic-settings
 
-# AI Pipeline [cite: 16]
+# AI Pipeline
 anthropic
 langgraph
+langchain
 langchain-anthropic
+langchain-google-genai
+langchain-postgres
 
-# Integrations [cite: 16]
+# Integrations
 slack_bolt
 
-# Database & Cache [cite: 177, 181]
+# Database & Cache
 sqlalchemy
 asyncpg
 pgvector
 redis
 alembic
+psycopg2-binary
+psycopg[binary]
+psycopg-pool
