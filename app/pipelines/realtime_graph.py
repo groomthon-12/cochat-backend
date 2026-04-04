@@ -90,10 +90,12 @@ async def reassess_importance(state: MessageState) -> dict:
     prompt = ChatPromptTemplate.from_messages([
         ("system", "당신은 기업용 메신저의 메시지 중요도 심사위원입니다.\n"
                    "이전에 AI 1차 평가 모델이 초기 긴급도(initial_urgency)를 부여했습니다.\n"
-                   "지금 우리는 회사의 관련 SOP나 과거 지침(Context)을 검색해 왔습니다.\n"
-                   "검색된 문맥 정보에 비추어 볼 때, 이전 평가 모델의 판정이 올바른지 다시 평가하고 최종 긴급도(final_urgency)를 도출하세요.\n"
-                   "만약 사내 지침에서 이 상황을 '중요하지 않다'거나 '무시해도 좋다'고 명시했다면 Low나 Normal로 낮추어야 합니다.\n"
-                   "별다른 지침 위반이 없다면 1차 긴급도를 그대로 유지하세요."
+                   "방금 우리는 회사의 가이드라인(Context)을 검색해 왔습니다. 이 검색된 문맥에는 [명시적인 사내 강제 룰]과 [과거 진행된 유사 이슈들의 누적 요약 내역]이 섞여 있을 수 있습니다.\n\n"
+                   "검색된 문맥 정보에 비추어 볼 때, 이전 평가 모델의 판정이 올바른지 다시 평가하고 최종 긴급도(final_urgency)를 도출하세요. 판단 원칙은 다음과 같습니다:\n"
+                   "1. 만약 검색된 사내 가이드라인이 명시적으로 특정 상황을 Emergency 등 매우 높은 긴급도로 올리라고 지시한다면, 무조건 그 규칙을 최우선으로 존중하여 과감히 긴급도를 상향하세요.\n"
+                   "2. 반대로 사내 지침에서 이 상황을 '무시해도 좋다'고 명시했다면 Low나 Normal로 낮추세요.\n"
+                   "3. 단, 명시적 룰이 있더라도, 과거 수차례 누적된 비슷한 장애 요약본들이 '모두 자동으로 안전하게 복구되었음(예: 이미 안정화됨)'과 같은 압도적인 패턴을 띄고 있다면, 규칙과 실무 현황을 종합적으로 고려하여 당신이 판사로서 유연하게 최종 긴급도를 조율하세요.\n"
+                   "4. 지침이나 관련 사례가 없다면 1차 긴급도를 유지합니다."
         ),
         ("user", "### 메타데이터 (채널, 나를 멘션했는지 여부 등):\n{metadata}\n\n"
                  "### 최근 스레드 문맥 (단기 기억):\n{history}\n\n"
@@ -140,8 +142,8 @@ async def deep_retrieve_context(state: MessageState) -> dict:
     # 1. 비동기 하이브리드 검색 및 RRF로 초기 후보군(Candidate Pool) 구성
     candidates = await asearch_hybrid_rrf(query, top_k=10)
     
-    # 2. Cross-Encoder를 통한 2차 정밀 재랭킹 (< 1.5s)
-    reranked_docs = search_cross_encoder_rerank(candidates, query, top_k=3)
+    # 2. Cross-Encoder를 통한 2차 정밀 재랭킹 (< 1.5s) (Top-K를 5로 늘려 Rule과 History 모두 포함)
+    reranked_docs = search_cross_encoder_rerank(candidates, query, top_k=5)
     
     contexts = [doc.get("content", "") for doc in reranked_docs]
     return {"retrieved_context": contexts}
