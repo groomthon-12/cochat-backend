@@ -332,7 +332,10 @@ Even if the shared DB changes are not yet ready for merge.
   - application user id
   - Slack team id
   - Slack user id
-- Until a richer schema is added, the current account key is stored as:
+- The DB schema now also stores:
+  - `integration_accounts.slack_team_id`
+  - `integration_accounts.slack_user_id`
+- `account_identifier` is still kept as a compatibility key:
 
 ```text
 <team_id>:<slack_user_id>
