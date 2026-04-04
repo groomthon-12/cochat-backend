@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,12 +7,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints import briefing, integrations, notifications, streams
 from app.ingress.discord_gateway import start_gateway, stop_gateway
 from app.ingress.slack_webhook import router as slack_router
+from app.core.scheduler import run_gc_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 1. 디스코드 게이트웨이 백그라운드 구동
     discord_task = await start_gateway()
+    
+    # 2. 벡터 DB 가비지 컬렉터 스케줄러 (태스크 스폰)
+    gc_task = asyncio.create_task(run_gc_scheduler(interval_hours=24))
+    
     yield
+    
+    # 3. 우아한 종료(Graceful Shutdown)
+    gc_task.cancel()
     await stop_gateway(discord_task)
 
 
