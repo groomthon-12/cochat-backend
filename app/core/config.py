@@ -1,9 +1,11 @@
 from pydantic_settings import BaseSettings
+import os
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str
-    ASYNC_DATABASE_URL: str
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
+    ASYNC_DATABASE_URL: str = os.getenv("ASYNC_DATABASE_URL")
+    REDIS_URL: str = os.getenv("REDIS_URL")
     MASTER_USER_ID: int = 1
 
     # Discord

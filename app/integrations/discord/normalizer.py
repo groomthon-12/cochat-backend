@@ -118,6 +118,8 @@ def normalize_message(
         title=title,
         sender_name=sender_name,
         sender_id=sender_id,
+        workspace_id=guild_id,
+        channel_id=channel_id,
         channel_name=channel_name,
         source_url=source_url,
         is_direct_target=is_dm or has_mentions,

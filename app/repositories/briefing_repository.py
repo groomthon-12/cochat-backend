@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -10,6 +12,24 @@ from app.models.focus_session import FocusSession
 from app.models.notification import Notification
 
 
+# ── FocusSession ──────────────────────────────────────────────────────────────
+
+async def create_focus_session(
+    db: AsyncSession,
+    user_id: int,
+    planned_duration_minutes: int,
+) -> FocusSession:
+    session = FocusSession(
+        user_id=user_id,
+        planned_duration_minutes=planned_duration_minutes,
+        started_at=datetime.now(timezone.utc),
+        status="active",
+    )
+    db.add(session)
+    await db.flush()
+    return session
+
+
 async def get_focus_session(db: AsyncSession, session_id: int) -> FocusSession | None:
     result = await db.execute(
         select(FocusSession).where(FocusSession.id == session_id)
@@ -17,13 +37,39 @@ async def get_focus_session(db: AsyncSession, session_id: int) -> FocusSession |
     return result.scalar_one_or_none()
 
 
+async def get_active_session(db: AsyncSession, user_id: int) -> FocusSession | None:
+    """유저의 현재 진행 중인 세션 조회."""
+    result = await db.execute(
+        select(FocusSession).where(
+            FocusSession.user_id == user_id,
+            FocusSession.status == "active",
+        ).order_by(desc(FocusSession.started_at)).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def end_focus_session(db: AsyncSession, session: FocusSession) -> FocusSession:
+    session.ended_at = datetime.now(timezone.utc)
+    session.status = "completed"
+    await db.flush()
+    return session
+
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
 async def get_notifications_for_session(
     db: AsyncSession,
     session: FocusSession,
 ) -> list[Notification]:
-    """세션 시작~종료 사이에 발생한 알림 조회. 종료 전이면 현재까지."""
-    from datetime import datetime, timezone
+    """세션 시작~종료 사이 수신된 알림 조회. 우선순위 높은 순 정렬."""
     ended_at = session.ended_at or datetime.now(timezone.utc)
+
+    priority_order = {
+        "high": 0,
+        "medium": 1,
+        "low": 2,
+        None: 3,
+    }
 
     result = await db.execute(
         select(Notification).where(
@@ -31,8 +77,14 @@ async def get_notifications_for_session(
             Notification.occurred_at <= ended_at,
         ).order_by(Notification.occurred_at.asc())
     )
-    return list(result.scalars().all())
+    notifications = list(result.scalars().all())
 
+    # 우선순위 → 발생시각 순 정렬
+    notifications.sort(key=lambda n: (priority_order.get(n.priority, 3), n.occurred_at))
+    return notifications
+
+
+# ── Briefing ──────────────────────────────────────────────────────────────────
 
 async def save_briefing(
     db: AsyncSession,
@@ -51,11 +103,23 @@ async def save_briefing(
     return briefing
 
 
-async def get_latest_briefing(db: AsyncSession) -> Briefing | None:
+async def get_latest_briefing(db: AsyncSession, user_id: int) -> Briefing | None:
+    """유저의 가장 최근 브리핑 조회."""
     result = await db.execute(
         select(Briefing)
+        .join(FocusSession, Briefing.session_id == FocusSession.id)
+        .where(FocusSession.user_id == user_id)
         .options(selectinload(Briefing.notifications))
         .order_by(desc(Briefing.generated_at))
         .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_briefing_by_id(db: AsyncSession, briefing_id: int) -> Briefing | None:
+    result = await db.execute(
+        select(Briefing)
+        .where(Briefing.id == briefing_id)
+        .options(selectinload(Briefing.notifications))
     )
     return result.scalar_one_or_none()

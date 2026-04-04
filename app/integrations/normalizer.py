@@ -76,6 +76,14 @@ class NotificationEvent(BaseModel):
             "Discord: user.id, Slack: user field"
         ),
     )
+    workspace_id: str | None = Field(
+        default=None,
+        description="워크스페이스/서버 고유 ID. Slack은 team, Discord는 guild_id",
+    )
+    channel_id: str | None = Field(
+        default=None,
+        description="채널 고유 ID. 단기 기억 저장소(Redis)의 주요 Key 속성으로 사용됨",
+    )
     channel_name: str | None = Field(
         default=None,
         description="채널명. DM이면 None. Slack은 channel ID만 있으므로 별도 조회 후 채움",
