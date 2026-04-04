@@ -1,12 +1,11 @@
-import os
 from typing import List, Dict, Any
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document
 from langchain_postgres.vectorstores import PGVector
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 
-_async_engine: AsyncEngine = None
+from app.db.session import engine
+
 _cross_encoder = None
 
 def _get_cross_encoder():
@@ -24,20 +23,8 @@ def _get_cross_encoder():
             return None
     return _cross_encoder
 
-def _get_async_engine() -> AsyncEngine:
-    global _async_engine
-    if _async_engine is None:
-        db_url = os.getenv("DATABASE_URL", "postgresql://cochat:cochat_dev@localhost:5432/cochat")
-        if db_url.startswith("postgresql://"):
-            db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
-        elif db_url.startswith("postgresql+asyncpg://"):
-            db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
-        _async_engine = create_async_engine(db_url)
-    return _async_engine
-
 def _get_vector_store() -> PGVector:
     """공용 PGVector 인스턴스 반환 함수"""
-    engine = _get_async_engine()
     embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
     
     return PGVector(
@@ -82,7 +69,6 @@ async def adelete_documents_from_vector_db(ids: List[str]) -> bool:
 
 async def afetch_stale_memories_from_db(limit: int = 10) -> List[Dict[str, Any]]:
     """가장 오래된 (occurred_at 기준) realtime_summary 메모리를 가져옵니다."""
-    engine = _get_async_engine()
     
     # 랭체인 PGVector의 기본 테이블 구조에 의존 (cmetadata 컬럼 사용)
     query = text("""
@@ -114,7 +100,6 @@ async def afetch_ongoing_memories_by_channel(channel_id: str) -> List[Dict[str, 
     if not channel_id:
         return []
         
-    engine = _get_async_engine()
     query = text("""
         SELECT id, document, cmetadata 
         FROM langchain_pg_embedding 
@@ -215,7 +200,6 @@ async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]
     """)
     
     try:
-        engine = _get_async_engine()
         async with engine.connect() as conn:
             result = await conn.execute(sql_query, {"search_query": query})
             rows = result.fetchall()
