@@ -4,8 +4,22 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document
 from langchain_postgres.vectorstores import PGVector
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+from sqlalchemy import text
 
 _async_engine: AsyncEngine = None
+_cross_encoder = None
+
+def _get_cross_encoder():
+    global _cross_encoder
+    if _cross_encoder is None:
+        try:
+            from sentence_transformers import CrossEncoder
+            # 한국어에 특화된 로컬 Reranker 모델 로드 (최초 1회 다운로드 빌드됨)
+            _cross_encoder = CrossEncoder('Dongjin-kr/ko-reranker')
+        except ImportError:
+            print("⚠️ sentence-transformers가 설치되지 않았습니다. 컨테이너를 재빌드해주세요.")
+            return None
+    return _cross_encoder
 
 def _get_async_engine() -> AsyncEngine:
     global _async_engine
@@ -110,8 +124,38 @@ async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]
         dense_results = []
     
     # 4. 희소(Sparse/BM25) 검색
-    # TODO: Postgres Full-Text Search(to_tsvector) 또는 로컬 ElasticSearch 연동
     sparse_results = []
+    
+    # 순수 Postgres Full-Text Search (FTS) 원시 쿼리
+    sql_query = text("""
+        SELECT e.cmetadata, e.document, ts_rank(to_tsvector('simple', e.document), plainto_tsquery('simple', :search_query)) as rank_score
+        FROM langchain_pg_embedding e
+        JOIN langchain_pg_collection c ON e.collection_id = c.uuid
+        WHERE c.name = 'message_guidelines' 
+          AND to_tsvector('simple', e.document) @@ plainto_tsquery('simple', :search_query)
+        ORDER BY rank_score DESC
+        LIMIT 10
+    """)
+    
+    try:
+        engine = _get_async_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(sql_query, {"search_query": query})
+            rows = result.fetchall()
+            
+            for i, row in enumerate(rows):
+                meta = row[0] or {}
+                doc_text = row[1]
+                score = float(row[2])
+                
+                doc_id = meta.get("id", f"sparse_{i}")
+                sparse_results.append({
+                    "id": str(doc_id),
+                    "content": doc_text,
+                    "score": score
+                })
+    except Exception as e:
+        print(f"⚠️ Vector DB Sparse 조회를 실패했습니다: {e}")
     
     # 5. RRF 융합 로직 태우기
     if not dense_results and not sparse_results:
@@ -123,9 +167,28 @@ async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]
 
 
 def search_cross_encoder_rerank(candidates: List[Dict[str, Any]], query: str, top_k: int = 2) -> List[Dict[str, Any]]:
-    """[High/Normal 전용] Cross-Encoder를 통한 정밀 재랭킹 (Mockup)"""
+    """[High/Normal 전용] Cross-Encoder를 통한 정밀 재랭킹 로직"""
+    if not candidates:
+        return []
+        
+    encoder = _get_cross_encoder()
+    if not encoder:
+        # 모델 패키지가 없으면 기존 RRF 순위대로 자름
+        return candidates[:top_k]
+        
+    pairs = [[query, c["content"]] for c in candidates]
     
-    # TODO: candidates 각 항목에 대해 query와의 Pair-wise 유사도를 Cross-Encoder 모델로 계산하여 재정렬
-    # reranked = cross_encoder.predict([(query, c["content"]) for c in candidates])
-    
-    return candidates[:top_k]
+    try:
+        # 모델 추론 수행 (Logit 점수 반환)
+        scores = encoder.predict(pairs)
+        
+        # 각 후보에 점수 매핑
+        for idx, score in enumerate(scores):
+            candidates[idx]["cross_encoder_score"] = float(score)
+            
+        # 가장 연관성이 높은 순서대로 딥 학습 내림차순 정렬
+        reranked = sorted(candidates, key=lambda x: x.get("cross_encoder_score", -999.0), reverse=True)
+        return reranked[:top_k]
+    except Exception as e:
+        print(f"⚠️ Cross-Encoder 추론 중 에러 발생: {e}")
+        return candidates[:top_k]
