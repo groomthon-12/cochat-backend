@@ -145,12 +145,18 @@ async def store_vector_db(state: MessageState) -> dict:
     summary = state.get("storable_summary")
     if summary:
         from app.pipelines.shared.retriever_utils import astore_document_to_vector_db
+        metadata = state.get("metadata", {})
+        
         await astore_document_to_vector_db(
             content=summary, 
             metadata={
                 "message_id": state.get("message_id"), 
                 "urgency": state.get("final_urgency"),
-                "source": "realtime_summary"
+                "source": "realtime_summary",
+                "occurred_at": metadata.get("occurred_at"),
+                "workspace_id": metadata.get("workspace_id"),
+                "channel_id": metadata.get("channel_id"),
+                "sender_id": metadata.get("sender_id")
             }
         )
     return {}

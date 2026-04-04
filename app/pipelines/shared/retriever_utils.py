@@ -80,6 +80,35 @@ async def adelete_documents_from_vector_db(ids: List[str]) -> bool:
         print(f"⚠️ Vector DB 데이터 삭제 실패: {e}")
         return False
 
+async def afetch_stale_memories_from_db(limit: int = 10) -> List[Dict[str, Any]]:
+    """가장 오래된 (occurred_at 기준) realtime_summary 메모리를 가져옵니다."""
+    engine = _get_async_engine()
+    
+    # 랭체인 PGVector의 기본 테이블 구조에 의존 (cmetadata 컬럼 사용)
+    query = text("""
+        SELECT id, document, cmetadata 
+        FROM langchain_pg_embedding 
+        WHERE cmetadata->>'source' = 'realtime_summary'
+        ORDER BY cmetadata->>'occurred_at' ASC NULLS LAST
+        LIMIT :limit
+    """)
+    
+    results = []
+    try:
+        async with engine.begin() as conn:
+            result_proxy = await conn.execute(query, {"limit": limit})
+            rows = result_proxy.fetchall()
+            for row in rows:
+                results.append({
+                    "id": str(row.id),
+                    "content": row.document,
+                    "metadata": row.cmetadata
+                })
+        return results
+    except Exception as e:
+        print(f"⚠️ Vector DB 조회 쿼리 실패: {e}")
+        return []
+
 def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
     """
     Reciprocal Rank Fusion (RRF) 알고리즘을 이용해 두 검색 결과를 융합합니다.
