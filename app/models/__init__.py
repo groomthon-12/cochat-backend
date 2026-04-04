@@ -9,6 +9,7 @@ from app.models.raw_event import RawEvent
 from app.models.user import User
 
 __all__ = [
+    "User",
     "IntegrationAccount",
     "IntegrationToken",
     "RawEvent",

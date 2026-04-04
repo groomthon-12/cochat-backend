@@ -45,6 +45,46 @@ def _build_title(
     return f"{display} in {ch}"
 
 
+def _extract_rich_contents(payload: dict) -> str | None:
+    """Slack payload에서 Blocks 및 Attachments의 텍스트 요소들을 마크다운으로 추출"""
+    lines = []
+    message_obj = payload.get("message") or payload
+    
+    # 1. Blocks 파싱 (주로 봇 메시지나 앱 알림)
+    blocks = message_obj.get("blocks", [])
+    if blocks:
+        lines.append(">[Slack Blocks]")
+        for block in blocks:
+            btype = block.get("type")
+            
+            # Text Section
+            if btype == "section" or btype == "header":
+                text_obj = block.get("text", {})
+                content = text_obj.get("text", "")
+                if content: lines.append(content)
+                
+            # Context (작은 글씨)
+            elif btype == "context":
+                elements = block.get("elements", [])
+                for el in elements:
+                    if el.get("type") == "mrkdwn" or el.get("type") == "plain_text":
+                        lines.append(f"*{el.get('text', '')}*")
+                        
+    # 2. Attachments 파싱 (구형 포맷이나 에러 로그 등)
+    attachments = message_obj.get("attachments", [])
+    if attachments:
+        lines.append(">[Slack Attachments]")
+        for att in attachments:
+            fallback = att.get("fallback")
+            title = att.get("title")
+            text = att.get("text")
+            if title: lines.append(f"**{title}**")
+            if text: lines.append(text)
+            elif fallback: lines.append(fallback)
+            
+    return "\n\n".join(lines) if lines else None
+
+
 def normalize_message(
     payload: dict,
     integration_id: int,
@@ -89,6 +129,7 @@ def normalize_message(
 
     raw_text: str = payload.get("text") or ""
     original_text = _clean_text(raw_text) if raw_text else ("[첨부파일]" if has_attachments else "")
+    rich_contents = _extract_rich_contents(payload)
 
     display_sender = sender_name or sender_id or "Unknown"
     display_channel = channel_name
@@ -110,6 +151,7 @@ def normalize_message(
         integration_id=integration_id,
         raw_event_id=raw_event_id,
         original_text=original_text,
+        rich_contents=rich_contents,
         payload=payload,
         source_type=source_type,
         provider_object_id=message_id,
