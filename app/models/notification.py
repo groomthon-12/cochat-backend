@@ -28,6 +28,7 @@ class Notification(Base):
     source_url = Column(String, nullable=True)
     sender_name = Column(String, nullable=True)
     channel_name = Column(String, nullable=True)
+    channel_id = Column(String, nullable=True, index=True)
     is_direct_target = Column(Boolean, nullable=False, default=False)
     is_broadcast = Column(Boolean, nullable=False, default=False)
     has_attachments = Column(Boolean, nullable=False, default=False)

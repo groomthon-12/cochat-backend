@@ -91,7 +91,10 @@ def normalize_message(
     original_text = _clean_text(raw_text) if raw_text else ("[첨부파일]" if has_attachments else "")
 
     display_sender = sender_name or sender_id or "Unknown"
-    display_channel = channel_name or payload.get("channel_id")
+    display_channel = channel_name
+
+    workspace_id = payload.get("workspace_id")
+    channel_id = payload.get("channel_id")
 
     source_type = _resolve_source_type(channel_type, is_thread, has_mentions)
     title = _build_title(source_type, display_sender, display_channel)
@@ -113,6 +116,8 @@ def normalize_message(
         title=title,
         sender_name=sender_name,
         sender_id=sender_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
         channel_name=channel_name,
         source_url=None,
         is_direct_target=is_dm or has_mentions,
