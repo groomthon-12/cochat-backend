@@ -1,10 +1,11 @@
 from pydantic_settings import BaseSettings
+import os
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str
-    ASYNC_DATABASE_URL: str
-    REDIS_URL: str = "redis://localhost:6379/0"
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
+    ASYNC_DATABASE_URL: str = os.getenv("ASYNC_DATABASE_URL")
+    REDIS_URL: str = os.getenv("REDIS_URL")
 
     # Discord
     DISCORD_BOT_TOKEN: str = ""

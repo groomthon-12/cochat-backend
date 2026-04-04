@@ -1,15 +1,19 @@
 from typing import Dict, Any
 
 from app.integrations.normalizer import NotificationEvent
+from app.models.notification import Notification
 from app.pipelines.state import MessageState
 from app.pipelines.realtime_graph import realtime_graph
 from app.core.redis_manager import fetch_short_term_memory, add_to_short_term_memory
 
-async def run_pipeline_with_memory(event: NotificationEvent) -> Dict[str, Any]:
+async def run_pipeline_with_memory(event: NotificationEvent) -> Notification:
     """
     웹훅으로부터 발생한 NotificationEvent를 받아 
     단기기억(Redis) 컨텍스트를 주입한 뒤 LangGraph 파이프라인을 구동하고,
     마지막에 이번 메시지를 다시 단기기억 버퍼에 추가하는 전방위 진입점입니다.
+    
+    분석이 끝나면 RDB에 즉시 삽입 가능한 Notification (SQLAlchemy Model) 
+    객체로 반환합니다.
     """
     
     # 1. 단기기억(Conversation History) 확보
@@ -60,9 +64,35 @@ async def run_pipeline_with_memory(event: NotificationEvent) -> Dict[str, Any]:
         
     print(f"✅ [Pipeline Entry] 처리 완료 및 단기기억 최신화 완료.")
     
-    # 분석된 결과 일부 반환 (Webhook 응답 등에서 사용)
-    return {
-        "final_urgency": final_state.get("final_urgency"),
-        "issue_type": final_state.get("issue_type"),
-        "judgment_rationale": final_state.get("judgment_rationale")
-    }
+    # 6. RDB 저장을 위한 SQLAlchemy Notification 객체 조립
+    priority = final_state.get("final_urgency")
+    score_map = {"Emergency": 1.0, "High": 0.8, "Normal": 0.5, "Low": 0.1}
+    priority_score = score_map.get(priority, 0.0)
+    
+    content_preview = event.original_text[:50] + "..." if len(event.original_text) > 50 else event.original_text
+    
+    # DB Model 맵핑
+    notification_db_model = Notification(
+        integration_id=event.integration_id,
+        raw_event_id=event.raw_event_id,
+        source_type=event.source_type,
+        provider_object_id=event.provider_object_id,
+        title=event.title,
+        original_text=event.original_text,
+        content_preview=content_preview,
+        source_url=event.source_url,
+        sender_name=event.sender_name,
+        channel_name=event.channel_name,
+        channel_id=event.channel_id,
+        is_direct_target=event.is_direct_target,
+        is_broadcast=event.is_broadcast,
+        has_attachments=event.has_attachments,
+        occurred_at=event.occurred_at,
+        priority=priority,
+        priority_score=priority_score,
+        summary=final_state.get("storable_summary"),
+        reason=final_state.get("judgment_rationale")
+    )
+    
+    # 라우터에서 session.add() 하도록 반환
+    return notification_db_model
