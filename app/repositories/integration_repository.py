@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.integration_account import IntegrationAccount
@@ -97,6 +97,37 @@ async def get_integration_by_account(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def list_active_slack_integrations_by_team(
+    db: AsyncSession,
+    team_id: str,
+    slack_user_id: str | None = None,
+) -> list[IntegrationAccount]:
+    """List active Slack integrations that belong to a workspace team.
+
+    Prefer the normalized ``slack_team_id`` / ``slack_user_id`` columns, but
+    keep a fallback for older rows that stored the workspace id directly in
+    ``account_identifier``.
+    """
+    stmt = select(IntegrationAccount).where(
+        IntegrationAccount.provider == "slack",
+        IntegrationAccount.status == "active",
+        or_(
+            IntegrationAccount.slack_team_id == team_id,
+            and_(
+                IntegrationAccount.slack_team_id.is_(None),
+                IntegrationAccount.account_identifier == team_id,
+            ),
+        ),
+    )
+    if slack_user_id is not None:
+        stmt = stmt.where(IntegrationAccount.slack_user_id == slack_user_id)
+
+    result = await db.execute(
+        stmt.order_by(IntegrationAccount.created_at.desc(), IntegrationAccount.id.desc())
+    )
+    return list(result.scalars().all())
 
 
 async def get_integration_by_user_account(

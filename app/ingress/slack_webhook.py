@@ -14,8 +14,8 @@ from app.integrations.slack.client import SlackClient
 from app.integrations.slack.events import SlackEventType, to_normalizer_payload
 from app.integrations.slack.normalizer import normalize_message
 from app.repositories.integration_repository import (
-    get_integration_by_account,
     get_token_by_integration_id,
+    list_active_slack_integrations_by_team,
 )
 from app.repositories.raw_event_repository import save_raw_event
 
@@ -92,35 +92,57 @@ async def slack_webhook(request: Request):
         logger.warning("Slack event received without team_id; skipping.")
         return {"ok": True}
 
+    authorizations = payload.get("authorizations") or []
+    authorization = authorizations[0] if authorizations else {}
+    authorized_user_id: str | None = authorization.get("user_id")
     channel_id: str | None = event.get("channel")
     user_id: str | None = event.get("user")
     provider_event_id: str = payload.get("event_id") or event.get("ts", "")
 
     async with AsyncSessionLocal() as db:
         async with db.begin():
-            integration = await get_integration_by_account(
+            integrations = await list_active_slack_integrations_by_team(
                 db=db,
-                provider="slack",
-                account_identifier=team_id,
+                team_id=team_id,
+                slack_user_id=authorized_user_id,
             )
-            if not integration:
-                logger.warning(
-                    "Slack integration not found for team_id=%s. Complete OAuth installation first.",
+            if not integrations and authorized_user_id:
+                logger.info(
+                    "No exact Slack integration match for team_id=%s authorized_user_id=%s; falling back to team-wide match.",
                     team_id,
+                    authorized_user_id,
+                )
+                integrations = await list_active_slack_integrations_by_team(
+                    db=db,
+                    team_id=team_id,
+                )
+
+            if not integrations:
+                logger.warning(
+                    "Slack integration not found for team_id=%s authorized_user_id=%s. Complete OAuth installation first.",
+                    team_id,
+                    authorized_user_id,
                 )
                 return {"ok": True}
 
-            token = await get_token_by_integration_id(db, integration.id)
-            raw_event = await save_raw_event(
-                db=db,
-                integration_id=integration.id,
-                provider="slack",
-                provider_event_id=provider_event_id,
-                event_type=event_type_raw,
-                payload=event,
-            )
+            persisted_events: list[tuple[int, str | None, int]] = []
+            for integration in integrations:
+                token = await get_token_by_integration_id(db, integration.id)
+                raw_event = await save_raw_event(
+                    db=db,
+                    integration_id=integration.id,
+                    provider="slack",
+                    provider_event_id=provider_event_id,
+                    event_type=event_type_raw,
+                    payload=event,
+                )
+                persisted_events.append((
+                    integration.id,
+                    token.access_token if token and token.access_token else None,
+                    raw_event.id,
+                ))
 
-        access_token = token.access_token if token else None
+    access_token = next((token for _, token, _ in persisted_events if token), None)
 
     channel_name, sender_name = await _load_metadata_names(
         access_token=access_token,
@@ -128,20 +150,22 @@ async def slack_webhook(request: Request):
         user_id=user_id,
     )
 
-    notification_event = normalize_message(
-        payload=to_normalizer_payload(payload),
-        integration_id=integration.id,
-        raw_event_id=raw_event.id,
-        channel_name=channel_name,
-        sender_name=sender_name,
-    )
+    normalizer_payload = to_normalizer_payload(payload)
+    for integration_id, _, raw_event_id in persisted_events:
+        notification_event = normalize_message(
+            payload=normalizer_payload,
+            integration_id=integration_id,
+            raw_event_id=raw_event_id,
+            channel_name=channel_name,
+            sender_name=sender_name,
+        )
 
-    logger.info(
-        "NotificationEvent created: provider=%s integration_id=%s raw_event_id=%s source_type=%s",
-        notification_event.provider,
-        notification_event.integration_id,
-        notification_event.raw_event_id,
-        notification_event.source_type,
-    )
+        logger.info(
+            "NotificationEvent created: provider=%s integration_id=%s raw_event_id=%s source_type=%s",
+            notification_event.provider,
+            notification_event.integration_id,
+            notification_event.raw_event_id,
+            notification_event.source_type,
+        )
 
     return {"ok": True}
