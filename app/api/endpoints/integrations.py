@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -202,15 +203,10 @@ async def slack_oauth_callback(
             access_token=access_token,
         )
 
-    return {
-        "status": "ok",
-        "integration_id": integration.id,
-        "app_user_id": app_user_id,
-        "team_id": team_id,
-        "team_name": team_name,
-        "slack_user_id": slack_user_id,
-        "account_identifier": account_identifier,
-    }
+    return RedirectResponse(
+        url=f"{settings.FRONTEND_URL}/setup?provider=slack&status=connected",
+        status_code=302,
+    )
 
 
 @router.get("/integrations/slack/connection")
@@ -516,9 +512,7 @@ async def discord_oauth_callback(
             expires_at=expires_at,
         )
 
-    return {
-        "status": "ok",
-        "integration_id": integration.id,
-        "guild_id": guild_id,
-        "guild_name": guild_name,
-    }
+    return RedirectResponse(
+        url=f"{settings.FRONTEND_URL}/setup?provider=discord&status=connected",
+        status_code=302,
+    )

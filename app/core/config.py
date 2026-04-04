@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = os.getenv("REDIS_URL")
     MASTER_USER_ID: int = 1
 
+    # Frontend
+    FRONTEND_URL: str = "http://localhost:3000"
+
     # Discord
     DISCORD_BOT_TOKEN: str = ""
     DISCORD_APPLICATION_ID: str = ""
