@@ -1,21 +1,107 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
 from app.integrations.discord.client import DiscordRestClient
 from app.integrations.slack.client import SlackClient
-from app.repositories.integration_repository import get_or_create_integration, upsert_token
+from app.repositories.integration_repository import (
+    get_or_create_integration,
+    get_or_create_user_integration,
+    list_integrations_by_user,
+    upsert_token,
+)
 
 router = APIRouter(tags=["integrations"])
 
 # Bot server messages need at least VIEW_CHANNEL + READ_MESSAGE_HISTORY.
 _DISCORD_BOT_PERMISSIONS = 66560
+
+_SLACK_USER_SCOPES = ",".join([
+    "channels:history",
+    "channels:read",
+    "groups:history",
+    "groups:read",
+    "im:history",
+    "im:read",
+    "mpim:history",
+    "mpim:read",
+    "users:read",
+])
+
+
+def _require_current_user_id(
+    x_cochat_user_id: str | None = Header(default=None, alias="X-Cochat-User-Id"),
+) -> int:
+    """Temporary auth stub until real login/session middleware is wired in."""
+    if not x_cochat_user_id:
+        raise HTTPException(status_code=401, detail="Missing X-Cochat-User-Id header.")
+
+    try:
+        user_id = int(x_cochat_user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid X-Cochat-User-Id header.") from exc
+
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid X-Cochat-User-Id header.")
+
+    return user_id
+
+
+def _build_slack_oauth_state(app_user_id: int) -> str:
+    payload = {
+        "provider": "slack",
+        "app_user_id": app_user_id,
+        "nonce": secrets.token_urlsafe(16),
+        "iat": int(time.time()),
+    }
+    payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    secret = settings.SLACK_CLIENT_SECRET.encode()
+    signature = hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest().encode()
+    token = base64.urlsafe_b64encode(payload_bytes + b"." + signature).decode().rstrip("=")
+    return token
+
+
+def _parse_slack_oauth_state(state: str) -> dict:
+    try:
+        padded = state + "=" * (-len(state) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode())
+        payload_bytes, signature = decoded.rsplit(b".", 1)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Slack OAuth state.") from exc
+
+    expected = hmac.new(
+        settings.SLACK_CLIENT_SECRET.encode(),
+        payload_bytes,
+        hashlib.sha256,
+    ).hexdigest().encode()
+
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=400, detail="Invalid Slack OAuth state signature.")
+
+    try:
+        payload = json.loads(payload_bytes)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Slack OAuth state payload.") from exc
+
+    if payload.get("provider") != "slack":
+        raise HTTPException(status_code=400, detail="Unexpected Slack OAuth state provider.")
+
+    if int(time.time()) - int(payload.get("iat", 0)) > 600:
+        raise HTTPException(status_code=400, detail="Slack OAuth state expired.")
+
+    return payload
 
 
 @router.get("/integrations")
@@ -24,23 +110,33 @@ def list_integrations():
 
 
 @router.get("/integrations/slack/oauth-url")
-def get_slack_oauth_url():
-    """Return the Slack OAuth installation URL."""
-    scopes = "channels:history,channels:read,chat:write,groups:read,im:history,im:read,mpim:read,users:read"
+def get_slack_oauth_url(
+    current_user_id: int = Depends(_require_current_user_id),
+):
+    """Return a user-scoped Slack OAuth URL for the current application user."""
+    state = _build_slack_oauth_state(current_user_id)
     params = urlencode({
         "client_id": settings.SLACK_CLIENT_ID,
-        "scope": scopes,
+        "user_scope": _SLACK_USER_SCOPES,
         "redirect_uri": settings.SLACK_REDIRECT_URI,
+        "state": state,
     })
-    return {"url": f"https://slack.com/oauth/v2/authorize?{params}"}
+    return {
+        "url": f"https://slack.com/oauth/v2/authorize?{params}",
+        "state": state,
+        "user_id": current_user_id,
+    }
 
 
 @router.get("/integrations/slack/callback")
 async def slack_oauth_callback(
     code: str,
+    state: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Exchange the Slack OAuth code and persist workspace/token data."""
+    """Exchange the Slack OAuth code and persist a user-scoped Slack integration."""
+    state_payload = _parse_slack_oauth_state(state)
+    app_user_id = int(state_payload["app_user_id"])
     client = SlackClient(token="")
 
     try:
@@ -53,19 +149,24 @@ async def slack_oauth_callback(
     except Exception as exc:  # pragma: no cover - delegated SDK failure
         raise HTTPException(status_code=400, detail="Slack authorization code exchange failed.") from exc
 
-    access_token: str = token_data.get("access_token", "")
+    authed_user: dict = token_data.get("authed_user", {})
+    access_token: str = authed_user.get("access_token") or token_data.get("access_token", "")
+    slack_user_id: str = authed_user.get("id", "")
     team: dict = token_data.get("team", {})
     team_id: str = team.get("id", "")
     team_name: str = team.get("name", team_id)
 
-    if not team_id:
-        raise HTTPException(status_code=400, detail="Slack workspace information is missing.")
+    if not team_id or not slack_user_id or not access_token:
+        raise HTTPException(status_code=400, detail="Slack user authorization data is missing.")
+
+    account_identifier = f"{team_id}:{slack_user_id}"
 
     async with db.begin():
-        integration = await get_or_create_integration(
+        integration = await get_or_create_user_integration(
             db=db,
+            user_id=app_user_id,
             provider="slack",
-            account_identifier=team_id,
+            account_identifier=account_identifier,
             account_name=team_name,
         )
         await upsert_token(
@@ -77,8 +178,36 @@ async def slack_oauth_callback(
     return {
         "status": "ok",
         "integration_id": integration.id,
+        "app_user_id": app_user_id,
         "team_id": team_id,
         "team_name": team_name,
+        "slack_user_id": slack_user_id,
+        "account_identifier": account_identifier,
+    }
+
+
+@router.get("/integrations/slack/connection")
+async def get_slack_connection(
+    current_user_id: int = Depends(_require_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current user's Slack connection status."""
+    integrations = await list_integrations_by_user(
+        db=db,
+        user_id=current_user_id,
+        provider="slack",
+    )
+    return {
+        "connected": len(integrations) > 0,
+        "integrations": [
+            {
+                "integration_id": integration.id,
+                "account_identifier": integration.account_identifier,
+                "account_name": integration.account_name,
+                "status": integration.status,
+            }
+            for integration in integrations
+        ],
     }
 
 

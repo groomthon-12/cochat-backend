@@ -37,6 +37,40 @@ async def get_or_create_integration(
     return integration
 
 
+async def get_or_create_user_integration(
+    db: AsyncSession,
+    user_id: int,
+    provider: str,
+    account_identifier: str,
+    account_name: str,
+) -> IntegrationAccount:
+    """Get or create an integration owned by an application user."""
+    result = await db.execute(
+        select(IntegrationAccount).where(
+            IntegrationAccount.user_id == user_id,
+            IntegrationAccount.provider == provider,
+            IntegrationAccount.account_identifier == account_identifier,
+        )
+    )
+    integration = result.scalar_one_or_none()
+
+    if integration is None:
+        integration = IntegrationAccount(
+            user_id=user_id,
+            provider=provider,
+            account_identifier=account_identifier,
+            account_name=account_name,
+            status="active",
+        )
+        db.add(integration)
+        await db.flush()
+        return integration
+
+    integration.account_name = account_name
+    integration.status = "active"
+    return integration
+
+
 async def get_integration_by_account(
     db: AsyncSession,
     provider: str,
@@ -50,6 +84,36 @@ async def get_integration_by_account(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_integration_by_user_account(
+    db: AsyncSession,
+    user_id: int,
+    provider: str,
+    account_identifier: str,
+) -> IntegrationAccount | None:
+    """Look up an integration for a specific application user."""
+    result = await db.execute(
+        select(IntegrationAccount).where(
+            IntegrationAccount.user_id == user_id,
+            IntegrationAccount.provider == provider,
+            IntegrationAccount.account_identifier == account_identifier,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_integrations_by_user(
+    db: AsyncSession,
+    user_id: int,
+    provider: str | None = None,
+) -> list[IntegrationAccount]:
+    """List integrations owned by an application user."""
+    stmt = select(IntegrationAccount).where(IntegrationAccount.user_id == user_id)
+    if provider is not None:
+        stmt = stmt.where(IntegrationAccount.provider == provider)
+    result = await db.execute(stmt.order_by(IntegrationAccount.created_at.desc()))
+    return list(result.scalars().all())
 
 
 async def upsert_token(
