@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     DISCORD_CLIENT_SECRET: str = ""
     DISCORD_REDIRECT_URI: str = "http://localhost:8000/api/v1/integrations/discord/callback"
 
+    # Google
+    GOOGLE_API_KEY: str = ""
+
     # Slack
     SLACK_BOT_TOKEN: str = ""
     SLACK_SIGNING_SECRET: str = ""
