@@ -15,6 +15,9 @@ def _get_cross_encoder():
         try:
             from sentence_transformers import CrossEncoder
             # 한국어에 특화된 로컬 Reranker 모델 로드 (최초 1회 다운로드 빌드됨)
+            if not os.getenv("HF_TOKEN"):
+                print("💡 에러: HF_TOKEN 환경변수가 설정되지 않았습니다!")
+                print("💡 .env 파일에 키를 넣거나 터미널에서 export 해주세요.")
             _cross_encoder = CrossEncoder('Dongjin-kr/ko-reranker')
         except ImportError:
             print("⚠️ sentence-transformers가 설치되지 않았습니다. 컨테이너를 재빌드해주세요.")
