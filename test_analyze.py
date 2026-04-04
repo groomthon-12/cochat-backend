@@ -2,12 +2,6 @@ import asyncio
 import os
 from pprint import pprint
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv("../cochat-infra/local/.env")
-except ImportError:
-    pass
-
 from app.pipelines.state import MessageState
 from app.pipelines.realtime_graph import realtime_graph
 
@@ -17,13 +11,16 @@ async def main():
         print("💡 .env 파일에 키를 넣거나 터미널에서 export 해주세요.")
         return
 
-    # 가상의 입력 데이터 (심각한 장애 상황 가정)
-    dummy_state = {
-        "message_id": "test_msg_001",
-        "content": "디비(db-prod-01) 커넥션 타임아웃 오류가 엄청 발생하고 있습니다. 서버가 멈췄어요! 확인해주세요!",
+    # 가상의 입력 데이터 (심각한 장애 상황 -> 해결 후 메시지)
+    dummy_state_1 = {
+        "message_id": "test_msg_005",
+        "content": "DB 커넥션 타임아웃 발생했습니다. 지금 시스템이 멈췄어요!",
         "metadata": {
             "provider": "slack",
-            "channel_name": "alerts-db-prod",
+            "channel_name": "dev-team",
+            "channel_id": "C01A2B3C4", # 핵심 식별자
+            "workspace_id": "W01G2H3I4",
+            "occurred_at": "2026-04-04T10:00:00Z",
             "is_direct_target": True,
             "has_attachments": False
         },
@@ -33,39 +30,49 @@ async def main():
         "judgment_rationale": "",
         "final_urgency": "",
         "should_store": False,
-        "storable_summary": ""
+        "storable_summary": "",
+        "issue_type": "new_issue"
     }
     
-    # MemorySaver용 스레드 ID 필요 (타임트래블 기준점)
-    config = {"configurable": {"thread_id": "test_session_01"}}
+    dummy_state_2 = {
+        "message_id": "test_msg_006",
+        "content": "방금 전 커넥션 이슈, 커넥션 풀을 300으로 늘리니까 아예 해결되었습니다.",
+        "metadata": {
+            "provider": "slack",
+            "channel_name": "dev-team",
+            "channel_id": "C01A2B3C4", # 동일 채널
+            "workspace_id": "W01G2H3I4",
+            "occurred_at": "2026-04-04T10:05:00Z",
+            "is_direct_target": False,
+            "has_attachments": False
+        },
+        "conversation_history": [],
+        "initial_urgency": "",
+        "retrieved_context": [],
+        "judgment_rationale": "",
+        "final_urgency": "",
+        "should_store": False,
+        "storable_summary": "",
+        "issue_type": "resolved"
+    }
     
-    print("🚀 LangGraph 실시간 파이프라인 전체 흐름 테스트를 시작합니다\n")
-    print("-" * 50)
-    
-    # astream을 사용하여 파이프라인의 각 노드 실행 과정을 Stream으로 추적
-    async for event in realtime_graph.astream(dummy_state, config=config):
-        for node_name, state_update in event.items():
-            print(f"🟢 [통과 노드]: {node_name}")
-            
-            # 노드별 중요 변경사항 요약 출력
-            if node_name == "analyze_message":
-                print(f"   👉 1차 산출 긴급도 : {state_update.get('initial_urgency')}")
-                print(f"   👉 판 단 근 거     : {state_update.get('judgment_rationale')}")
-            
-            elif node_name == "fast_retrieve_emergency_context":
-                print(f"   🚨 Emergency 라우팅 발동! 초저지연 RAG 검색 수행됨")
-                print(f"   👉 검색된 SOP 지침 : {state_update.get('retrieved_context')}")
-                
-            elif node_name == "deep_retrieve_context":
-                print(f"   🔍 High/Normal 라우팅 발동! 다단계 정밀 검색 수행됨")
-                print(f"   👉 검색된 과거문서: {state_update.get('retrieved_context')}")
-                
-            elif node_name == "fast_reassess_importance" or node_name == "reassess_importance":
-                print(f"   👉 최종 확정 긴급도: {state_update.get('final_urgency')}")
-                
-            print("-" * 50)
-            
-    print("\n✅ 파이프라인 그래프 정상 종료 완료.")
+    async def run_flow(state_data, session_id, title):
+        config = {"configurable": {"thread_id": session_id}}
+        print(f"🚀 {title}\n")
+        print("-" * 50)
+        async for event in realtime_graph.astream(state_data, config=config):
+            for node_name, state_update in event.items():
+                print(f"🟢 [통과 노드]: {node_name}")
+                if node_name == "analyze_message":
+                    print(f"   👉 분류된 이슈타입: {state_update.get('issue_type')}")
+                    print(f"   👉 산출 긴급도 : {state_update.get('initial_urgency')}")
+                elif node_name == "store_vector_db":
+                    print(f"   💾 VectorDB 저장 완료 통과")
+                print("-" * 50)
+        print(f"\n✅ {title} 완료.\n")
+        
+    await run_flow(dummy_state_1, "session_01", "[1단계] 장애 발생 이벤트")
+    await run_flow(dummy_state_2, "session_02", "[2단계] 장애 해결 후속 이벤트")
     
     # =====================================================================
     # 🔍 Checkpointer(MemorySaver) 타임트래블 확인 파트
