@@ -81,6 +81,27 @@ Success response:
 }
 ```
 
+## Recommended frontend sequence
+
+Use the Slack integration UI in this order:
+
+1. Call `GET /api/v1/integrations/slack/connection`
+2. If `connected` is `false`, call `GET /api/v1/integrations/slack/oauth-url`
+3. Redirect the browser to the returned Slack OAuth URL
+4. After Slack callback succeeds, call `GET /api/v1/integrations/slack/connection` again
+5. Use the returned `integration_id` to call `GET /api/v1/integrations/slack/conversations`
+6. Let the user choose one conversation from the returned list
+7. Call `POST /api/v1/integrations/slack/sync`
+8. Use the returned `raw_event_ids` as the backend-side confirmation that Slack messages were saved
+
+This is the current end-to-end flow for:
+
+- connect Slack
+- check connection state
+- browse accessible conversations
+- store selected Slack messages as `raw_events`
+- disconnect Slack later if needed
+
 ## Connection status check
 
 Frontend request:
@@ -204,6 +225,90 @@ Response:
 ```
 
 This endpoint reads recent Slack messages with the connected user's token and stores the original messages as `raw_events`.
+
+## How to verify external integration
+
+You can verify this flow locally without opening a PR.
+
+### What can be tested now
+
+- Slack OAuth URL generation
+- Slack account connection and token storage
+- Slack conversation list loading
+- Slack message pull into `raw_events`
+- Slack disconnect flow
+
+### What you do not need
+
+- You do not need Slack Events API webhook setup for this flow
+- You do not need `ngrok` for this flow
+
+This path is based on:
+
+- OAuth callback
+- Slack Web API pull (`conversations.list`, `conversations.history`)
+- local DB persistence
+
+### End-to-end verification checklist
+
+1. Start the backend with valid Slack env values and a working local DB
+2. Call `GET /api/v1/integrations/slack/oauth-url`
+3. Open the returned Slack authorization URL in a browser
+4. Complete Slack authorization and confirm callback response contains:
+   - `integration_id`
+   - `team_id`
+   - `slack_user_id`
+5. Call `GET /api/v1/integrations/slack/connection` and confirm:
+   - `connected: true`
+   - one active integration exists
+6. Call `GET /api/v1/integrations/slack/conversations?integration_id=...`
+7. Confirm that Slack channels/DMs visible to the connected Slack user are returned
+8. Call `POST /api/v1/integrations/slack/sync`
+9. Confirm the response contains:
+   - `processed_messages`
+   - `raw_event_ids`
+   - `provider_event_ids`
+10. Query the DB and confirm rows exist in:
+   - `integration_accounts`
+   - `integration_tokens`
+   - `raw_events`
+
+### Suggested DB checks
+
+Example checks after one successful sync:
+
+```sql
+select id, user_id, provider, account_identifier, account_name, status
+from integration_accounts
+where provider = 'slack'
+order by id desc;
+```
+
+```sql
+select id, integration_id, updated_at
+from integration_tokens
+order by id desc;
+```
+
+```sql
+select id, provider, integration_id, provider_event_id, event_type, received_at
+from raw_events
+where provider = 'slack'
+order by id desc
+limit 20;
+```
+
+### If shared DB changes are not merged yet
+
+You can still verify the external integration locally as long as your local DB schema matches the current branch.
+
+That means:
+
+- you can confirm OAuth works
+- you can confirm Slack API pull works
+- you can confirm `raw_event` persistence works
+
+Even if the shared DB changes are not yet ready for merge.
 
 ## What the frontend must do
 
