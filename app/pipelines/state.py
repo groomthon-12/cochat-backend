@@ -45,6 +45,7 @@ class MessageState(TypedDict):
     
     should_store: bool               # 임베딩/요약 저장 여부
     storable_summary: str            # 저장에 적합하게 가공된 내용 요약
+    issue_type: str                  # "new_issue", "ongoing_update", "resolved", "independent"
 
 
 class FeedbackState(TypedDict):

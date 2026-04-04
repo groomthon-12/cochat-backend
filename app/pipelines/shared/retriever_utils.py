@@ -109,6 +109,38 @@ async def afetch_stale_memories_from_db(limit: int = 10) -> List[Dict[str, Any]]
         print(f"⚠️ Vector DB 조회 쿼리 실패: {e}")
         return []
 
+async def afetch_ongoing_memories_by_channel(channel_id: str) -> List[Dict[str, Any]]:
+    """특정 채널 내에서 '진행 중(ongoing)'인 작업 메모리 추출"""
+    if not channel_id:
+        return []
+        
+    engine = _get_async_engine()
+    query = text("""
+        SELECT id, document, cmetadata 
+        FROM langchain_pg_embedding 
+        WHERE cmetadata->>'channel_id' = :channel_id 
+          AND cmetadata->>'issue_status' = 'ongoing'
+        ORDER BY cmetadata->>'occurred_at' DESC
+        LIMIT 5
+    """)
+    
+    results = []
+    try:
+        async with engine.begin() as conn:
+            result_proxy = await conn.execute(query, {"channel_id": channel_id})
+            rows = result_proxy.fetchall()
+            for row in rows:
+                # Upsert용 외부 고유 ID는 cmetadata의 message_id로 보존됨
+                results.append({
+                    "id": str(row.cmetadata.get("message_id", row.id)),
+                    "content": row.document,
+                    "metadata": row.cmetadata
+                })
+        return results
+    except Exception as e:
+        print(f"⚠️ Ongoing 이슈 조회 쿼리 실패: {e}")
+        return []
+
 def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
     """
     Reciprocal Rank Fusion (RRF) 알고리즘을 이용해 두 검색 결과를 융합합니다.
