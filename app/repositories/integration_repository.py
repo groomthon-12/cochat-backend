@@ -107,11 +107,14 @@ async def list_integrations_by_user(
     db: AsyncSession,
     user_id: int,
     provider: str | None = None,
+    status: str | None = None,
 ) -> list[IntegrationAccount]:
     """List integrations owned by an application user."""
     stmt = select(IntegrationAccount).where(IntegrationAccount.user_id == user_id)
     if provider is not None:
         stmt = stmt.where(IntegrationAccount.provider == provider)
+    if status is not None:
+        stmt = stmt.where(IntegrationAccount.status == status)
     result = await db.execute(stmt.order_by(IntegrationAccount.created_at.desc()))
     return list(result.scalars().all())
 
@@ -175,3 +178,27 @@ async def get_token_by_integration_id(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def disconnect_integration_for_user(
+    db: AsyncSession,
+    user_id: int,
+    integration_id: int,
+    provider: str | None = None,
+) -> IntegrationAccount | None:
+    """Deactivate a user's integration and remove its stored token."""
+    integration = await get_integration_by_id_for_user(
+        db=db,
+        user_id=user_id,
+        integration_id=integration_id,
+        provider=provider,
+    )
+    if integration is None:
+        return None
+
+    token = await get_token_by_integration_id(db, integration.id)
+    if token is not None:
+        await db.delete(token)
+
+    integration.status = "inactive"
+    return integration

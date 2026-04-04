@@ -22,6 +22,7 @@ from app.integrations.slack.sync_service import (
     sync_conversation_raw_events,
 )
 from app.repositories.integration_repository import (
+    disconnect_integration_for_user,
     get_integration_by_id_for_user,
     get_or_create_integration,
     get_or_create_user_integration,
@@ -59,6 +60,8 @@ def _require_current_user_id(
 ) -> int:
     """Temporary auth stub until real login/session middleware is wired in."""
     if not x_cochat_user_id:
+        if settings.MASTER_USER_ID > 0:
+            return settings.MASTER_USER_ID
         raise HTTPException(status_code=401, detail="Missing X-Cochat-User-Id header.")
 
     try:
@@ -209,8 +212,10 @@ async def get_slack_connection(
         db=db,
         user_id=current_user_id,
         provider="slack",
+        status="active",
     )
     return {
+        "user_id": current_user_id,
         "connected": len(integrations) > 0,
         "integrations": [
             {
@@ -221,6 +226,32 @@ async def get_slack_connection(
             }
             for integration in integrations
         ],
+    }
+
+
+@router.delete("/integrations/slack/connection/{integration_id}")
+async def disconnect_slack_connection(
+    integration_id: int,
+    current_user_id: int = Depends(_require_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Disconnect the current user's Slack integration."""
+    async with db.begin():
+        integration = await disconnect_integration_for_user(
+            db=db,
+            user_id=current_user_id,
+            integration_id=integration_id,
+            provider="slack",
+        )
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="Slack integration not found for current user.")
+
+    return {
+        "status": "ok",
+        "user_id": current_user_id,
+        "integration_id": integration.id,
+        "disconnected": True,
     }
 
 

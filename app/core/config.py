@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     DATABASE_URL: str
     ASYNC_DATABASE_URL: str
+    MASTER_USER_ID: int = 1
 
     # Discord
     DISCORD_BOT_TOKEN: str = ""
