@@ -10,16 +10,23 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
 from app.integrations.discord.client import DiscordRestClient
 from app.integrations.slack.client import SlackClient
+from app.integrations.slack.sync_service import (
+    list_accessible_conversations,
+    sync_conversation_raw_events,
+)
 from app.repositories.integration_repository import (
+    get_integration_by_id_for_user,
     get_or_create_integration,
     get_or_create_user_integration,
     list_integrations_by_user,
+    get_token_by_integration_id,
     upsert_token,
 )
 
@@ -39,6 +46,12 @@ _SLACK_USER_SCOPES = ",".join([
     "mpim:read",
     "users:read",
 ])
+
+
+class SlackSyncRequest(BaseModel):
+    integration_id: int = Field(gt=0)
+    channel_id: str
+    limit: int = Field(default=30, ge=1, le=200)
 
 
 def _require_current_user_id(
@@ -208,6 +221,74 @@ async def get_slack_connection(
             }
             for integration in integrations
         ],
+    }
+
+
+@router.get("/integrations/slack/conversations")
+async def get_slack_conversations(
+    integration_id: int,
+    limit: int = 100,
+    current_user_id: int = Depends(_require_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List Slack conversations accessible to the connected user token."""
+    integration = await get_integration_by_id_for_user(
+        db=db,
+        user_id=current_user_id,
+        integration_id=integration_id,
+        provider="slack",
+    )
+    if not integration:
+        raise HTTPException(status_code=404, detail="Slack integration not found for current user.")
+
+    token = await get_token_by_integration_id(db, integration.id)
+    if not token or not token.access_token:
+        raise HTTPException(status_code=400, detail="Slack token not found for integration.")
+
+    conversations = await list_accessible_conversations(
+        access_token=token.access_token,
+        limit=limit,
+    )
+    return {
+        "integration_id": integration.id,
+        "count": len(conversations),
+        "conversations": conversations,
+    }
+
+
+@router.post("/integrations/slack/sync")
+async def sync_slack_conversation(
+    payload: SlackSyncRequest,
+    current_user_id: int = Depends(_require_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch recent Slack messages for one conversation and store them as raw events."""
+    integration = await get_integration_by_id_for_user(
+        db=db,
+        user_id=current_user_id,
+        integration_id=payload.integration_id,
+        provider="slack",
+    )
+    if not integration:
+        raise HTTPException(status_code=404, detail="Slack integration not found for current user.")
+
+    token = await get_token_by_integration_id(db, integration.id)
+    if not token or not token.access_token:
+        raise HTTPException(status_code=400, detail="Slack token not found for integration.")
+
+    async with db.begin():
+        result = await sync_conversation_raw_events(
+            db=db,
+            integration_id=integration.id,
+            access_token=token.access_token,
+            channel_id=payload.channel_id,
+            limit=payload.limit,
+        )
+
+    return {
+        "status": "ok",
+        "integration_id": integration.id,
+        **result,
     }
 
 

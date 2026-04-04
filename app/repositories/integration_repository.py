@@ -116,6 +116,23 @@ async def list_integrations_by_user(
     return list(result.scalars().all())
 
 
+async def get_integration_by_id_for_user(
+    db: AsyncSession,
+    user_id: int,
+    integration_id: int,
+    provider: str | None = None,
+) -> IntegrationAccount | None:
+    """Get a single integration owned by an application user."""
+    stmt = select(IntegrationAccount).where(
+        IntegrationAccount.id == integration_id,
+        IntegrationAccount.user_id == user_id,
+    )
+    if provider is not None:
+        stmt = stmt.where(IntegrationAccount.provider == provider)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def upsert_token(
     db: AsyncSession,
     integration_id: int,
