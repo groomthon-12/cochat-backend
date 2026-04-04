@@ -3,6 +3,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document
 from langchain_postgres.vectorstores import PGVector
 from sqlalchemy import text
+import os
 
 from app.db.session import engine
 
