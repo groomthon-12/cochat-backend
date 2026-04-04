@@ -18,12 +18,7 @@ class ValidationOutput(BaseModel):
 
 # ==============================================================================
 # Node Functions
-# ==============================================================================
 
-def retrieve_original_message(state: FeedbackState) -> dict:
-    """PostgreSQL에서 사용자가 피드백한 원본 메시지와 메타데이터 조회"""
-    # TODO: DB 쿼리로 대상 메시지 내용 조회
-    return {}
 
 async def extract_correction_guideline(state: FeedbackState) -> dict:
     """원분류와 수정분류의 차이로부터 Few-shot 가이드라인을 LLM으로 추출"""
@@ -120,14 +115,12 @@ def check_guideline_validity(state: FeedbackState) -> str:
 # ==============================================================================
 
 feedback_builder = StateGraph(FeedbackState)
-feedback_builder.add_node("retrieve_original_message", retrieve_original_message)
 feedback_builder.add_node("extract_correction_guideline", extract_correction_guideline)
 feedback_builder.add_node("validate_guideline_consistency", validate_guideline_consistency)
 feedback_builder.add_node("override_conflicting_guideline", override_conflicting_guideline)
 feedback_builder.add_node("store_feedback_guideline", store_feedback_guideline)
 
-feedback_builder.set_entry_point("retrieve_original_message")
-feedback_builder.add_edge("retrieve_original_message", "extract_correction_guideline")
+feedback_builder.set_entry_point("extract_correction_guideline")
 feedback_builder.add_edge("extract_correction_guideline", "validate_guideline_consistency")
 
 feedback_builder.add_conditional_edges(
