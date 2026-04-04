@@ -15,7 +15,12 @@ This is a personal connection flow, not a workspace-shared Slack installation fl
 
 The backend assumes authentication already exists elsewhere.
 
-For now, the frontend must send the current application user id in the request header below:
+For now, the backend can operate in two modes:
+
+- Preferred: the frontend sends the current application user id in the header below
+- Fallback: if the header is omitted, the backend uses `MASTER_USER_ID`
+
+Header format:
 
 ```http
 X-Cochat-User-Id: <app user id>
@@ -89,6 +94,7 @@ Response:
 
 ```json
 {
+  "user_id": 123,
   "connected": true,
   "integrations": [
     {
@@ -100,6 +106,30 @@ Response:
   ]
 }
 ```
+
+If the frontend does not send `X-Cochat-User-Id`, the response is based on the configured `MASTER_USER_ID`.
+
+## Disconnect one Slack connection
+
+Frontend request:
+
+```http
+DELETE /api/v1/integrations/slack/connection/1
+X-Cochat-User-Id: 123
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "user_id": 123,
+  "integration_id": 1,
+  "disconnected": true
+}
+```
+
+This marks the Slack integration as inactive and removes the stored Slack token.
 
 ## List accessible Slack conversations
 
@@ -178,11 +208,12 @@ This endpoint reads recent Slack messages with the connected user's token and st
 ## What the frontend must do
 
 - Know the current application user id
-- Send `X-Cochat-User-Id` when requesting the Slack OAuth URL
+- Send `X-Cochat-User-Id` when requesting the Slack OAuth URL, or rely on the backend `MASTER_USER_ID` fallback
 - Redirect the browser to the returned Slack OAuth URL
 - After callback success, refresh the connection status from the backend
 - Load accessible conversations for the connected integration
 - Ask the backend to sync the selected conversation into `raw_events`
+- Allow the user to disconnect an integration from the UI
 
 ## What the frontend does not need to do
 
