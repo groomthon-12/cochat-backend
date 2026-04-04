@@ -14,9 +14,12 @@ langchain-postgres
 
 # Integrations
 slack_bolt
+discord.py>=2.3.0
+httpx
 
 # Database & Cache
 sqlalchemy
+greenlet
 asyncpg
 pgvector
 redis
