@@ -79,6 +79,8 @@ async def main():
     # =====================================================================
     print("\n📸 [Checkpointer 기록 확인]")
     
+    config = {"configurable": {"thread_id": "session_02"}}
+    
     # 1. 뼈대 전체의 현재 최종 상태 가져오기
     current_state = realtime_graph.get_state(config)
     print(f"- 현재 저장된 노드 단계: {current_state.next if current_state.next else '종료됨(END)'}")
