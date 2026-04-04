@@ -311,14 +311,14 @@ async def sync_slack_conversation(
     if not token or not token.access_token:
         raise HTTPException(status_code=400, detail="Slack token not found for integration.")
 
-    async with db.begin():
-        result = await sync_conversation_raw_events(
-            db=db,
-            integration_id=integration.id,
-            access_token=token.access_token,
-            channel_id=payload.channel_id,
-            limit=payload.limit,
-        )
+    result = await sync_conversation_raw_events(
+        db=db,
+        integration_id=integration.id,
+        access_token=token.access_token,
+        channel_id=payload.channel_id,
+        limit=payload.limit,
+    )
+    await db.commit()
 
     return {
         "status": "ok",
