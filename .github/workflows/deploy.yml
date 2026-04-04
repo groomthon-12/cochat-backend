@@ -79,7 +79,7 @@ jobs:
             --task-definition ${{ steps.register-task-def.outputs.task-def-arn }} \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.ECS_SUBNET_ID }}],securityGroups=[${{ secrets.ECS_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"sh\",\"-c\",\"alembic upgrade head\"]}]}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"sh\",\"-c\",\"alembic upgrade heads\"]}]}" \
             --region $AWS_REGION \
             --query 'tasks[0].taskArn' \
             --output text)
