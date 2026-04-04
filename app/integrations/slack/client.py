@@ -12,6 +12,52 @@ class SlackClient:
     def __init__(self, token: str) -> None:
         self._client = AsyncWebClient(token=token)
 
+    async def list_conversations(
+        self,
+        limit: int = 100,
+        types: str = "public_channel,private_channel,im,mpim",
+    ) -> list[dict]:
+        """List conversations the current Slack user token can access."""
+        conversations: list[dict] = []
+        cursor: str | None = None
+
+        while len(conversations) < limit:
+            page_limit = min(limit - len(conversations), 200)
+            try:
+                res = await self._client.conversations_list(
+                    limit=page_limit,
+                    types=types,
+                    exclude_archived=True,
+                    cursor=cursor,
+                )
+            except SlackApiError as e:
+                logger.warning("Slack conversations list failed: %s", e.response["error"])
+                return conversations
+
+            conversations.extend(res.get("channels", []))
+            cursor = (res.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return conversations[:limit]
+
+    async def get_conversation_history(
+        self,
+        channel_id: str,
+        limit: int = 30,
+    ) -> list[dict]:
+        """Fetch recent messages from a Slack conversation."""
+        try:
+            res = await self._client.conversations_history(
+                channel=channel_id,
+                limit=limit,
+                inclusive=True,
+            )
+            return res.get("messages", [])
+        except SlackApiError as e:
+            logger.warning("Slack conversation history failed channel_id=%s: %s", channel_id, e.response["error"])
+            return []
+
     async def get_channel_name(self, channel_id: str) -> str | None:
         """Resolve a human-readable Slack conversation name from a channel id."""
         try:
