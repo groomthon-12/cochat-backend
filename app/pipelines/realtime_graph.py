@@ -28,7 +28,7 @@ class ReassessOutput(BaseModel):
     )
     judgment_rationale: str = Field(description="긴급도를 이와 같이 판단하게 된 이유 혹은 변경 사유 (핵심만 간결하게)")
 
-def analyze_message(state: MessageState) -> dict:
+async def analyze_message(state: MessageState) -> dict:
     """1차 긴급도 및 저장 가치 판단 (Gemini Flash 사용)"""
     
     # 1. 모델과 파서 초기화 (실제 실행을 위해선 GOOGLE_API_KEY 환경변수 세팅 필수)
@@ -53,7 +53,7 @@ def analyze_message(state: MessageState) -> dict:
     # 3. 모델 체인지업(Invocation)
     chain = prompt | structured_llm
     
-    result = chain.invoke({
+    result = await chain.ainvoke({
         "metadata": state.get("metadata", {}),
         "history": state.get("conversation_history", []),
         "content": state.get("content", "")
