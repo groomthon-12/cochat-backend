@@ -58,6 +58,7 @@ class FeedbackState(TypedDict):
     
     extracted_guideline: str         # LLM이 도출한 향후 오분류 방지용 일반화 가이드라인 (Few-shot용)
     validation_result: str           # "Valid", "Merge", "Conflict" (RAG Poisoning 방지용 검증 결과)
+    conflicting_doc_ids: List[str]   # 충돌하는 과거 가이드라인 ID 배열
 
 
 class MemoryGCState(TypedDict):

@@ -64,6 +64,19 @@ async def astore_document_to_vector_db(content: str, metadata: dict = None) -> b
         print(f"⚠️ Vector DB 저장 실패: {e}")
         return False
 
+async def adelete_documents_from_vector_db(ids: List[str]) -> bool:
+    """Vector DB에서 특정 ID 배열에 해당하는 문서들을 삭제 (비동기)"""
+    if not ids:
+        return False
+        
+    try:
+        vector_store = _get_vector_store()
+        await vector_store.adelete(ids=ids)
+        return True
+    except Exception as e:
+        print(f"⚠️ Vector DB 데이터 삭제 실패: {e}")
+        return False
+
 def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
     """
     Reciprocal Rank Fusion (RRF) 알고리즘을 이용해 두 검색 결과를 융합합니다.
