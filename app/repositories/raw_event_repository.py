@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.raw_event import RawEvent
 
@@ -36,3 +37,28 @@ async def save_raw_event(
     db.add(raw_event)
     await db.flush()
     return raw_event
+
+
+async def list_raw_events_by_integration_ids(
+    db: AsyncSession,
+    integration_ids: list[int],
+    provider: str | None = None,
+    limit: int = 100,
+) -> list[RawEvent]:
+    """List recent raw events across multiple integrations."""
+    if not integration_ids:
+        return []
+
+    stmt = (
+        select(RawEvent)
+        .options(selectinload(RawEvent.integration))
+        .where(RawEvent.integration_id.in_(integration_ids))
+        .order_by(RawEvent.received_at.desc(), RawEvent.id.desc())
+        .limit(limit)
+    )
+
+    if provider is not None:
+        stmt = stmt.where(RawEvent.provider == provider)
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())

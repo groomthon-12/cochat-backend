@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from app.integrations.discord.client import DiscordRestClient
 from app.integrations.slack.client import SlackClient
 from app.integrations.slack.sync_service import (
     list_accessible_conversations,
+    sync_accessible_conversations,
     sync_conversation_raw_events,
 )
 from app.repositories.integration_repository import (
@@ -28,8 +29,10 @@ from app.repositories.integration_repository import (
     get_or_create_user_integration,
     list_integrations_by_user,
     get_token_by_integration_id,
+    list_integrations_by_user,
     upsert_token,
 )
+from app.repositories.raw_event_repository import list_raw_events_by_integration_ids
 
 router = APIRouter(tags=["integrations"])
 
@@ -53,6 +56,12 @@ class SlackSyncRequest(BaseModel):
     integration_id: int = Field(gt=0)
     channel_id: str
     limit: int = Field(default=30, ge=1, le=200)
+
+
+class SlackSyncAllRequest(BaseModel):
+    integration_ids: list[int] | None = None
+    conversation_limit: int = Field(default=100, ge=1, le=200)
+    message_limit: int = Field(default=30, ge=1, le=200)
 
 
 def _require_current_user_id(
@@ -324,6 +333,124 @@ async def sync_slack_conversation(
         "status": "ok",
         "integration_id": integration.id,
         **result,
+    }
+
+
+@router.post("/integrations/slack/sync-all")
+async def sync_all_slack_connections(
+    payload: SlackSyncAllRequest,
+    current_user_id: int = Depends(_require_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync recent messages across all selected Slack connections for the current user."""
+    integrations = await list_integrations_by_user(
+        db=db,
+        user_id=current_user_id,
+        provider="slack",
+        status="active",
+    )
+    if payload.integration_ids:
+        requested_ids = set(payload.integration_ids)
+        integrations = [integration for integration in integrations if integration.id in requested_ids]
+
+    if not integrations:
+        raise HTTPException(status_code=404, detail="No active Slack integrations found for current user.")
+
+    integration_results: list[dict] = []
+    total_messages = 0
+
+    for integration in integrations:
+        token = await get_token_by_integration_id(db, integration.id)
+        if not token or not token.access_token:
+            integration_results.append({
+                "integration_id": integration.id,
+                "account_name": integration.account_name,
+                "slack_team_id": integration.slack_team_id,
+                "slack_user_id": integration.slack_user_id,
+                "processed_messages": 0,
+                "conversation_count": 0,
+                "skipped": True,
+                "reason": "missing_token",
+            })
+            continue
+
+        result = await sync_accessible_conversations(
+            db=db,
+            integration_id=integration.id,
+            access_token=token.access_token,
+            conversation_limit=payload.conversation_limit,
+            message_limit=payload.message_limit,
+        )
+        total_messages += result["processed_messages"]
+        integration_results.append({
+            **result,
+            "account_name": integration.account_name,
+            "slack_team_id": integration.slack_team_id,
+            "slack_user_id": integration.slack_user_id,
+        })
+
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "user_id": current_user_id,
+        "integration_count": len(integration_results),
+        "processed_messages": total_messages,
+        "integrations": integration_results,
+    }
+
+
+@router.get("/integrations/slack/raw-events")
+async def list_slack_raw_events(
+    integration_ids: list[int] | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user_id: int = Depends(_require_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent Slack raw events merged across the current user's active Slack integrations."""
+    integrations = await list_integrations_by_user(
+        db=db,
+        user_id=current_user_id,
+        provider="slack",
+        status="active",
+    )
+    if integration_ids:
+        allowed_ids = set(integration_ids)
+        integrations = [integration for integration in integrations if integration.id in allowed_ids]
+
+    if not integrations:
+        return {
+            "user_id": current_user_id,
+            "count": 0,
+            "raw_events": [],
+        }
+
+    integration_by_id = {integration.id: integration for integration in integrations}
+    raw_events = await list_raw_events_by_integration_ids(
+        db=db,
+        integration_ids=list(integration_by_id.keys()),
+        provider="slack",
+        limit=limit,
+    )
+
+    return {
+        "user_id": current_user_id,
+        "count": len(raw_events),
+        "raw_events": [
+            {
+                "id": raw_event.id,
+                "integration_id": raw_event.integration_id,
+                "provider_event_id": raw_event.provider_event_id,
+                "event_type": raw_event.event_type,
+                "received_at": raw_event.received_at.isoformat(),
+                "payload": raw_event.payload,
+                "account_name": integration_by_id[raw_event.integration_id].account_name,
+                "account_identifier": integration_by_id[raw_event.integration_id].account_identifier,
+                "slack_team_id": integration_by_id[raw_event.integration_id].slack_team_id,
+                "slack_user_id": integration_by_id[raw_event.integration_id].slack_user_id,
+            }
+            for raw_event in raw_events
+        ],
     }
 
 
