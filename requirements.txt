@@ -19,6 +19,7 @@ httpx
 
 # Database & Cache
 sqlalchemy
+greenlet
 asyncpg
 pgvector
 redis

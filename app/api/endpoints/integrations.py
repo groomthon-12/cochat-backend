@@ -91,20 +91,20 @@ async def discord_oauth_callback(
         else None
     )
 
-    try:
-        user = await client.get_current_user(access_token)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Discord 사용자 정보 조회에 실패했습니다.")
+    # scope=bot 응답에는 봇이 추가된 guild 정보가 포함됨
+    guild: dict | None = token_data.get("guild")
+    if not guild:
+        raise HTTPException(status_code=400, detail="guild 정보를 찾을 수 없습니다. 봇 초대를 다시 시도해주세요.")
 
-    user_id: str = user["id"]
-    username: str = user.get("global_name") or user.get("username", user_id)
+    guild_id: str = guild["id"]
+    guild_name: str = guild.get("name", guild_id)
 
     async with db.begin():
         integration = await get_or_create_integration(
             db=db,
             provider="discord",
-            account_identifier=user_id,
-            account_name=username,
+            account_identifier=guild_id,
+            account_name=guild_name,
         )
         await upsert_token(
             db=db,
@@ -117,5 +117,6 @@ async def discord_oauth_callback(
     return {
         "status": "ok",
         "integration_id": integration.id,
-        "account_name": username,
+        "guild_id": guild_id,
+        "guild_name": guild_name,
     }

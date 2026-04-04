@@ -41,3 +41,6 @@ htmlcov/
 
 # Local test scripts
 test_discord_gateway.py
+
+# Local Docker setup
+docker-compose.yml

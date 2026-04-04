@@ -6,6 +6,11 @@ import logging
 import discord
 
 from app.core.config import settings
+from app.db.session import AsyncSessionLocal
+from app.integrations.discord.events import DiscordEventType
+from app.integrations.discord.normalizer import normalize_message
+from app.repositories.integration_repository import get_integration_by_account
+from app.repositories.raw_event_repository import save_raw_event
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +50,40 @@ class CoChatDiscordBot(discord.Client):
 
         logger.debug("Discord 메시지 수신: %s", payload)
 
-        # TODO: DB 연결 후 아래 코드 활성화
-        # raw_event = await save_raw_event(db_session, payload, integration_id)
-        # event = normalize_message(payload, integration_id=integration_id, raw_event_id=raw_event.id)
-        # await enqueue_notification(event)
+        guild_id: str | None = payload["guild_id"]
+        if not guild_id:
+            # DM은 integration_account가 없으므로 현재는 스킵
+            return
+
+        async with AsyncSessionLocal() as db:
+            async with db.begin():
+                integration = await get_integration_by_account(
+                    db=db,
+                    provider="discord",
+                    account_identifier=guild_id,
+                )
+                if not integration:
+                    logger.warning("guild_id=%s에 대한 IntegrationAccount가 없습니다. OAuth 연동을 먼저 완료하세요.", guild_id)
+                    return
+
+                raw_event = await save_raw_event(
+                    db=db,
+                    integration_id=integration.id,
+                    provider="discord",
+                    provider_event_id=payload["id"],
+                    event_type=DiscordEventType.MESSAGE_CREATE,
+                    payload=payload,
+                )
+
+                event = normalize_message(
+                    payload=payload,
+                    integration_id=integration.id,
+                    raw_event_id=raw_event.id,
+                )
+                logger.info("NotificationEvent 생성: provider=%s integration_id=%s raw_event_id=%s", event.provider, event.integration_id, event.raw_event_id)
+
+                # TODO: worker enqueue 연결 시 활성화
+                # await enqueue_notification(event)
 
 
 async def start_gateway() -> asyncio.Task:

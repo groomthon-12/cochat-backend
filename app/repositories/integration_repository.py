@@ -37,6 +37,21 @@ async def get_or_create_integration(
     return integration
 
 
+async def get_integration_by_account(
+    db: AsyncSession,
+    provider: str,
+    account_identifier: str,
+) -> IntegrationAccount | None:
+    """provider + account_identifier로 연동 계정 조회."""
+    result = await db.execute(
+        select(IntegrationAccount).where(
+            IntegrationAccount.provider == provider,
+            IntegrationAccount.account_identifier == account_identifier,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def upsert_token(
     db: AsyncSession,
     integration_id: int,
