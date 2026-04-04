@@ -39,6 +39,31 @@ def _build_title(
     return f"{display} in {ch}"
 
 
+def _extract_rich_contents(payload: dict) -> str | None:
+    """Discord payload에서 본문 외 임베드(Embeds) 등 메타데이터 글자들을 마크다운으로 추출"""
+    lines = []
+    
+    # 1. Embeds 추출
+    embeds = payload.get("embeds", [])
+    if embeds:
+        for embed in embeds:
+            lines.append(">[Embed Component]")
+            title = embed.get("title")
+            if title: lines.append(f"**{title}**")
+            description = embed.get("description")
+            if description: lines.append(description)
+            
+            # Fields
+            fields = embed.get("fields", [])
+            for field in fields:
+                fname = field.get("name", "")
+                fval = field.get("value", "")
+                if fname or fval:
+                    lines.append(f"- **{fname}**: {fval}")
+    
+    return "\n".join(lines) if lines else None
+
+
 def normalize_message(
     payload: dict,
     integration_id: int,
@@ -90,6 +115,7 @@ def normalize_message(
 
     raw_text: str = payload.get("content") or ""
     original_text = _clean_text(raw_text) if raw_text else ("[첨부파일]" if has_attachments else "")
+    rich_contents = _extract_rich_contents(payload)
 
     source_type = _resolve_source_type(is_dm, has_mentions)
     title = _build_title(source_type, sender_name, channel_name)
@@ -112,6 +138,7 @@ def normalize_message(
         integration_id=integration_id,
         raw_event_id=raw_event_id,
         original_text=original_text,
+        rich_contents=rich_contents,
         payload=payload,
         source_type=source_type,
         provider_object_id=message_id,

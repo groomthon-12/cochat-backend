@@ -48,6 +48,13 @@ class NotificationEvent(BaseModel):
             "비어있으면 '[첨부파일]' 등 fallback 문자열로 채운다."
         ),
     )
+    rich_contents: str | None = Field(
+        default=None,
+        description=(
+            "내부 컴포넌트(Slack Blocks, Discord Embeds 등)의 모든 텍스트를 평탄화한 마크다운 풍부한 텍스트. "
+            "LLM RAG 파이프라인과 Redis History에서 주력 문맥으로 활용됩니다."
+        ),
+    )
     payload: dict[str, Any] = Field(
         description="플랫폼 원본 JSON — raw_events.payload와 동일. AI가 추가 컨텍스트 필요 시 참조.",
     )

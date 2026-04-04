@@ -24,6 +24,7 @@ class Notification(Base):
     provider_object_id = Column(String, nullable=True)
     title = Column(String, nullable=False)
     original_text = Column(Text, nullable=True)
+    rich_contents = Column(Text, nullable=True)
     content_preview = Column(Text, nullable=True)
     source_url = Column(String, nullable=True)
     sender_name = Column(String, nullable=True)
