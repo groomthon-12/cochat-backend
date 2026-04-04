@@ -56,7 +56,9 @@ async def main():
         "issue_type": "resolved"
     }
     
-    async def run_flow(state_data, session_id, title):
+    async def run_flow(state_data, title):
+        # 💡 message_id 자체를 LangGraph의 thread_id(실행 단위)로 지정
+        session_id = state_data["message_id"]
         config = {"configurable": {"thread_id": session_id}}
         print(f"🚀 {title}\n")
         print("-" * 50)
@@ -71,15 +73,16 @@ async def main():
                 print("-" * 50)
         print(f"\n✅ {title} 완료.\n")
         
-    await run_flow(dummy_state_1, "session_01", "[1단계] 장애 발생 이벤트")
-    await run_flow(dummy_state_2, "session_02", "[2단계] 장애 해결 후속 이벤트")
+    await run_flow(dummy_state_1, "[1단계] 장애 발생 이벤트")
+    await run_flow(dummy_state_2, "[2단계] 장애 해결 후속 이벤트")
     
     # =====================================================================
     # 🔍 Checkpointer(MemorySaver) 타임트래블 확인 파트
     # =====================================================================
     print("\n📸 [Checkpointer 기록 확인]")
     
-    config = {"configurable": {"thread_id": "session_02"}}
+    # 마지막으로 실행했던 두 번째 메시지의 상태 이력 조회
+    config = {"configurable": {"thread_id": dummy_state_2["message_id"]}}
     
     # 1. 뼈대 전체의 현재 최종 상태 가져오기
     current_state = realtime_graph.get_state(config)
