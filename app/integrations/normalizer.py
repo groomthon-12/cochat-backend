@@ -6,44 +6,100 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-ProviderType = Literal["slack", "jira", "discord", "gmail"]
+ProviderType = Literal["slack", "discord"]
+
+SourceType = Literal["dm", "mention", "channel_message", "thread_reply"]
 
 
 class NotificationEvent(BaseModel):
-    """다양한 플랫폼에서 들어온 원본 웹훅 이벤트를 정규화한 모델.
+    """플랫폼 원본 이벤트를 정규화한 모델.
 
-    AI 파이프라인의 입력값으로 사용된다.
+    normalizer가 채우는 필드와 AI 파이프라인이 채우는 필드가 명확히 구분된다.
+
+    [normalizer 담당]
+    - provider, integration_id, raw_event_id
+    - source_type, provider_object_id, title
+    - original_text (AI 입력용 핵심 텍스트)
+    - sender_name, sender_id, channel_name, source_url
+    - is_direct_target, is_broadcast, has_attachments
+    - occurred_at, received_at
+    - payload (원본 보존)
+
+    [AI 파이프라인 담당 — pipeline이 채운 뒤 Notification 저장]
+    - priority, priority_score, summary, reason, content_preview
     """
 
+    # ── 메타 ──────────────────────────────────────────────────────────────
     provider: ProviderType = Field(
-        description="원본 플랫폼 이름 (slack | jira | discord | gmail)",
+        description="원본 플랫폼 (slack | discord)",
     )
     integration_id: int = Field(
-        description="연동 계정을 식별하는 ID",
+        description="integration_accounts.id FK",
     )
     raw_event_id: int = Field(
-        description="원본 웹훅 이벤트 레코드를 참조하는 ID",
+        description="raw_events.id FK",
+    )
+
+    # ── AI 파이프라인 입력 ─────────────────────────────────────────────────
+    original_text: str = Field(
+        description=(
+            "AI가 읽는 핵심 텍스트. "
+            "플랫폼 마크업(@멘션, 채널링크 등)을 제거한 순수 문자열. "
+            "비어있으면 '[첨부파일]' 등 fallback 문자열로 채운다."
+        ),
     )
     payload: dict[str, Any] = Field(
-        description="플랫폼에서 수신한 원본 JSON 데이터",
+        description="플랫폼 원본 JSON — raw_events.payload와 동일. AI가 추가 컨텍스트 필요 시 참조.",
+    )
+
+    # ── notifications 테이블 직접 매핑 ────────────────────────────────────
+    source_type: SourceType = Field(
+        description="알림 유형: dm | mention | channel_message | thread_reply",
+    )
+    provider_object_id: str = Field(
+        description="플랫폼 내 메시지 고유 ID. Discord: message.id, Slack: ts",
+    )
+    title: str = Field(
+        description=(
+            "알림 제목 (자동 생성). "
+            "예) 'DM from 홍길동', '홍길동 mentioned you in #general'"
+        ),
     )
     sender_name: str | None = Field(
         default=None,
-        description="알림 발신자 이름. 알 수 없는 경우 None",
+        description="발신자 표시 이름. 알 수 없으면 None",
+    )
+    sender_id: str | None = Field(
+        default=None,
+        description=(
+            "플랫폼 발신자 ID. 이름이 바뀌어도 식별 가능하도록 보존. "
+            "Discord: user.id, Slack: user field"
+        ),
     )
     channel_name: str | None = Field(
         default=None,
-        description="알림이 발생한 채널명. DM인 경우 None",
+        description="채널명. DM이면 None. Slack은 channel ID만 있으므로 별도 조회 후 채움",
+    )
+    source_url: str | None = Field(
+        default=None,
+        description="원본 메시지 링크. Discord: /channels/{guild}/{channel}/{msg}. Slack: 구성 불가 시 None",
+    )
+    is_direct_target: bool = Field(
+        default=False,
+        description="나를 직접 겨냥한 메시지 여부. DM이거나 @멘션이면 True. 우선순위 가중치에 영향.",
     )
     is_broadcast: bool = Field(
         default=False,
-        description="@everyone, @here 등 전체 공지성 메시지 여부",
+        description="@everyone/@here 등 전체 공지 여부",
     )
     has_attachments: bool = Field(
         default=False,
-        description="첨부파일 또는 Embed 포함 여부",
+        description="첨부파일 또는 Embed/Block 포함 여부",
+    )
+    occurred_at: datetime = Field(
+        description="메시지가 실제 발생한 시각 (UTC). Discord: message.timestamp, Slack: ts 변환",
     )
     received_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        description="이벤트 수신 시간 (UTC)",
+        description="서버가 이벤트를 수신한 시각 (UTC)",
     )

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.endpoints import briefing, integrations, notifications, streams
 from app.ingress.discord_gateway import start_gateway, stop_gateway
+from app.ingress.slack_webhook import router as slack_router
 
 
 @asynccontextmanager
@@ -30,6 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(integrations.router, prefix="/api/v1")
+app.include_router(slack_router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(streams.router, prefix="/api/v1")
 app.include_router(briefing.router, prefix="/api/v1")
