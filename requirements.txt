@@ -10,6 +10,7 @@ langgraph
 langchain
 langchain-anthropic
 langchain-google-genai
+google-genai
 langchain-postgres
 
 # Integrations
