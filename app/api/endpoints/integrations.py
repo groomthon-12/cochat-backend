@@ -26,9 +26,7 @@ from app.integrations.slack.sync_service import (
 from app.repositories.integration_repository import (
     disconnect_integration_for_user,
     get_integration_by_id_for_user,
-    get_or_create_integration,
     get_or_create_user_integration,
-    list_integrations_by_user,
     get_token_by_integration_id,
     list_integrations_by_user,
     upsert_token,
@@ -85,49 +83,51 @@ def _require_current_user_id(
     return user_id
 
 
-def _build_slack_oauth_state(app_user_id: int) -> str:
+def _build_oauth_state(provider: str, app_user_id: int, secret: str) -> str:
     payload = {
-        "provider": "slack",
+        "provider": provider,
         "app_user_id": app_user_id,
         "nonce": secrets.token_urlsafe(16),
         "iat": int(time.time()),
     }
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
-    secret = settings.SLACK_CLIENT_SECRET.encode()
-    signature = hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest().encode()
+    signature = hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest().encode()
     token = base64.urlsafe_b64encode(payload_bytes + b"." + signature).decode().rstrip("=")
     return token
 
 
-def _parse_slack_oauth_state(state: str) -> dict:
+def _parse_oauth_state(state: str, provider: str, secret: str) -> dict:
     try:
         padded = state + "=" * (-len(state) % 4)
         decoded = base64.urlsafe_b64decode(padded.encode())
         payload_bytes, signature = decoded.rsplit(b".", 1)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid Slack OAuth state.") from exc
+        raise HTTPException(status_code=400, detail=f"Invalid {provider} OAuth state.") from exc
 
-    expected = hmac.new(
-        settings.SLACK_CLIENT_SECRET.encode(),
-        payload_bytes,
-        hashlib.sha256,
-    ).hexdigest().encode()
-
+    expected = hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest().encode()
     if not hmac.compare_digest(expected, signature):
-        raise HTTPException(status_code=400, detail="Invalid Slack OAuth state signature.")
+        raise HTTPException(status_code=400, detail=f"Invalid {provider} OAuth state signature.")
 
     try:
         payload = json.loads(payload_bytes)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid Slack OAuth state payload.") from exc
+        raise HTTPException(status_code=400, detail=f"Invalid {provider} OAuth state payload.") from exc
 
-    if payload.get("provider") != "slack":
-        raise HTTPException(status_code=400, detail="Unexpected Slack OAuth state provider.")
+    if payload.get("provider") != provider:
+        raise HTTPException(status_code=400, detail=f"Unexpected {provider} OAuth state provider.")
 
     if int(time.time()) - int(payload.get("iat", 0)) > 600:
-        raise HTTPException(status_code=400, detail="Slack OAuth state expired.")
+        raise HTTPException(status_code=400, detail=f"{provider} OAuth state expired.")
 
     return payload
+
+
+def _build_slack_oauth_state(app_user_id: int) -> str:
+    return _build_oauth_state("slack", app_user_id, settings.SLACK_CLIENT_SECRET)
+
+
+def _parse_slack_oauth_state(state: str) -> dict:
+    return _parse_oauth_state(state, "slack", settings.SLACK_CLIENT_SECRET)
 
 
 @router.get("/integrations")
@@ -451,24 +451,32 @@ async def list_slack_raw_events(
 
 
 @router.get("/integrations/discord/oauth-url")
-def get_discord_oauth_url():
+def get_discord_oauth_url(
+    current_user_id: int = Depends(_require_current_user_id),
+):
     """Return the Discord bot installation URL."""
+    state = _build_oauth_state("discord", current_user_id, settings.DISCORD_CLIENT_SECRET)
     params = urlencode({
         "client_id": settings.DISCORD_CLIENT_ID,
         "permissions": _DISCORD_BOT_PERMISSIONS,
         "scope": "bot identify guilds",
         "redirect_uri": settings.DISCORD_REDIRECT_URI,
         "response_type": "code",
+        "state": state,
     })
-    return {"url": f"https://discord.com/oauth2/authorize?{params}"}
+    return {"url": f"https://discord.com/oauth2/authorize?{params}", "state": state, "user_id": current_user_id}
 
 
 @router.get("/integrations/discord/callback")
 async def discord_oauth_callback(
     code: str,
+    state: str,
     db: AsyncSession = Depends(get_db),
 ):
     """Exchange the Discord OAuth code and persist guild/token data."""
+    state_payload = _parse_oauth_state(state, "discord", settings.DISCORD_CLIENT_SECRET)
+    app_user_id: int = int(state_payload["app_user_id"])
+
     client = DiscordRestClient(bot_token=settings.DISCORD_BOT_TOKEN)
 
     try:
@@ -498,8 +506,9 @@ async def discord_oauth_callback(
     guild_name: str = guild.get("name", guild_id)
 
     async with db.begin():
-        integration = await get_or_create_integration(
+        integration = await get_or_create_user_integration(
             db=db,
+            user_id=app_user_id,
             provider="discord",
             account_identifier=guild_id,
             account_name=guild_name,
