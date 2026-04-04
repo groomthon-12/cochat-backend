@@ -81,3 +81,16 @@ async def upsert_token(
         token.expires_at = expires_at
 
     return token
+
+
+async def get_token_by_integration_id(
+    db: AsyncSession,
+    integration_id: int,
+) -> IntegrationToken | None:
+    """integration_id에 연결된 저장 토큰 조회."""
+    result = await db.execute(
+        select(IntegrationToken).where(
+            IntegrationToken.integration_id == integration_id
+        )
+    )
+    return result.scalar_one_or_none()
