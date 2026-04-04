@@ -4,8 +4,25 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document
 from langchain_postgres.vectorstores import PGVector
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+from sqlalchemy import text
 
 _async_engine: AsyncEngine = None
+_cross_encoder = None
+
+def _get_cross_encoder():
+    global _cross_encoder
+    if _cross_encoder is None:
+        try:
+            from sentence_transformers import CrossEncoder
+            # 한국어에 특화된 로컬 Reranker 모델 로드 (최초 1회 다운로드 빌드됨)
+            if not os.getenv("HF_TOKEN"):
+                print("💡 에러: HF_TOKEN 환경변수가 설정되지 않았습니다!")
+                print("💡 .env 파일에 키를 넣거나 터미널에서 export 해주세요.")
+            _cross_encoder = CrossEncoder('Dongjin-kr/ko-reranker')
+        except ImportError:
+            print("⚠️ sentence-transformers가 설치되지 않았습니다. 컨테이너를 재빌드해주세요.")
+            return None
+    return _cross_encoder
 
 def _get_async_engine() -> AsyncEngine:
     global _async_engine
@@ -49,6 +66,80 @@ async def astore_document_to_vector_db(content: str, metadata: dict = None) -> b
     except Exception as e:
         print(f"⚠️ Vector DB 저장 실패: {e}")
         return False
+
+async def adelete_documents_from_vector_db(ids: List[str]) -> bool:
+    """Vector DB에서 특정 ID 배열에 해당하는 문서들을 삭제 (비동기)"""
+    if not ids:
+        return False
+        
+    try:
+        vector_store = _get_vector_store()
+        await vector_store.adelete(ids=ids)
+        return True
+    except Exception as e:
+        print(f"⚠️ Vector DB 데이터 삭제 실패: {e}")
+        return False
+
+async def afetch_stale_memories_from_db(limit: int = 10) -> List[Dict[str, Any]]:
+    """가장 오래된 (occurred_at 기준) realtime_summary 메모리를 가져옵니다."""
+    engine = _get_async_engine()
+    
+    # 랭체인 PGVector의 기본 테이블 구조에 의존 (cmetadata 컬럼 사용)
+    query = text("""
+        SELECT id, document, cmetadata 
+        FROM langchain_pg_embedding 
+        WHERE cmetadata->>'source' = 'realtime_summary'
+        ORDER BY cmetadata->>'occurred_at' ASC NULLS LAST
+        LIMIT :limit
+    """)
+    
+    results = []
+    try:
+        async with engine.begin() as conn:
+            result_proxy = await conn.execute(query, {"limit": limit})
+            rows = result_proxy.fetchall()
+            for row in rows:
+                results.append({
+                    "id": str(row.id),
+                    "content": row.document,
+                    "metadata": row.cmetadata
+                })
+        return results
+    except Exception as e:
+        print(f"⚠️ Vector DB 조회 쿼리 실패: {e}")
+        return []
+
+async def afetch_ongoing_memories_by_channel(channel_id: str) -> List[Dict[str, Any]]:
+    """특정 채널 내에서 '진행 중(ongoing)'인 작업 메모리 추출"""
+    if not channel_id:
+        return []
+        
+    engine = _get_async_engine()
+    query = text("""
+        SELECT id, document, cmetadata 
+        FROM langchain_pg_embedding 
+        WHERE cmetadata->>'channel_id' = :channel_id 
+          AND cmetadata->>'issue_status' = 'ongoing'
+        ORDER BY cmetadata->>'occurred_at' DESC
+        LIMIT 5
+    """)
+    
+    results = []
+    try:
+        async with engine.begin() as conn:
+            result_proxy = await conn.execute(query, {"channel_id": channel_id})
+            rows = result_proxy.fetchall()
+            for row in rows:
+                # Upsert용 외부 고유 ID는 cmetadata의 message_id로 보존됨
+                results.append({
+                    "id": str(row.cmetadata.get("message_id", row.id)),
+                    "content": row.document,
+                    "metadata": row.cmetadata
+                })
+        return results
+    except Exception as e:
+        print(f"⚠️ Ongoing 이슈 조회 쿼리 실패: {e}")
+        return []
 
 def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
     """
@@ -110,8 +201,38 @@ async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]
         dense_results = []
     
     # 4. 희소(Sparse/BM25) 검색
-    # TODO: Postgres Full-Text Search(to_tsvector) 또는 로컬 ElasticSearch 연동
     sparse_results = []
+    
+    # 순수 Postgres Full-Text Search (FTS) 원시 쿼리
+    sql_query = text("""
+        SELECT e.cmetadata, e.document, ts_rank(to_tsvector('simple', e.document), plainto_tsquery('simple', :search_query)) as rank_score
+        FROM langchain_pg_embedding e
+        JOIN langchain_pg_collection c ON e.collection_id = c.uuid
+        WHERE c.name = 'message_guidelines' 
+          AND to_tsvector('simple', e.document) @@ plainto_tsquery('simple', :search_query)
+        ORDER BY rank_score DESC
+        LIMIT 10
+    """)
+    
+    try:
+        engine = _get_async_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(sql_query, {"search_query": query})
+            rows = result.fetchall()
+            
+            for i, row in enumerate(rows):
+                meta = row[0] or {}
+                doc_text = row[1]
+                score = float(row[2])
+                
+                doc_id = meta.get("id", f"sparse_{i}")
+                sparse_results.append({
+                    "id": str(doc_id),
+                    "content": doc_text,
+                    "score": score
+                })
+    except Exception as e:
+        print(f"⚠️ Vector DB Sparse 조회를 실패했습니다: {e}")
     
     # 5. RRF 융합 로직 태우기
     if not dense_results and not sparse_results:
@@ -123,9 +244,28 @@ async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]
 
 
 def search_cross_encoder_rerank(candidates: List[Dict[str, Any]], query: str, top_k: int = 2) -> List[Dict[str, Any]]:
-    """[High/Normal 전용] Cross-Encoder를 통한 정밀 재랭킹 (Mockup)"""
+    """[High/Normal 전용] Cross-Encoder를 통한 정밀 재랭킹 로직"""
+    if not candidates:
+        return []
+        
+    encoder = _get_cross_encoder()
+    if not encoder:
+        # 모델 패키지가 없으면 기존 RRF 순위대로 자름
+        return candidates[:top_k]
+        
+    pairs = [[query, c["content"]] for c in candidates]
     
-    # TODO: candidates 각 항목에 대해 query와의 Pair-wise 유사도를 Cross-Encoder 모델로 계산하여 재정렬
-    # reranked = cross_encoder.predict([(query, c["content"]) for c in candidates])
-    
-    return candidates[:top_k]
+    try:
+        # 모델 추론 수행 (Logit 점수 반환)
+        scores = encoder.predict(pairs)
+        
+        # 각 후보에 점수 매핑
+        for idx, score in enumerate(scores):
+            candidates[idx]["cross_encoder_score"] = float(score)
+            
+        # 가장 연관성이 높은 순서대로 딥 학습 내림차순 정렬
+        reranked = sorted(candidates, key=lambda x: x.get("cross_encoder_score", -999.0), reverse=True)
+        return reranked[:top_k]
+    except Exception as e:
+        print(f"⚠️ Cross-Encoder 추론 중 에러 발생: {e}")
+        return candidates[:top_k]

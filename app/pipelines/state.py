@@ -7,6 +7,10 @@ class MessageMetadata(TypedDict, total=False):
     """
     provider: str                    # "slack", "discord"
     source_type: str                 # "dm", "mention", "channel_message", "thread_reply"
+    
+    workspace_id: str                # 슬랙 team, 디스코드 guild_id
+    channel_id: str                  # 채널 고유 ID
+    sender_id: str                   # 발신자 고유 ID
     sender_name: str                 # 발신자 표시 이름
     channel_name: str                # 채널명
     
@@ -14,7 +18,7 @@ class MessageMetadata(TypedDict, total=False):
     is_broadcast: bool               # @everyone, @here 등 전체 공지인가?
     has_attachments: bool            # 첨부파일/Embed 포함 여부
     
-    occurred_at: str                 # 발생 시각 (ISO8601)
+    occurred_at: str                 # 발생 시각 (ISO8601, 슬랙 ts, 디스코드 timestamp 통합)
     source_url: str                  # 원문 링크 (Permalink)
 
 # ==============================================================================
@@ -41,6 +45,7 @@ class MessageState(TypedDict):
     
     should_store: bool               # 임베딩/요약 저장 여부
     storable_summary: str            # 저장에 적합하게 가공된 내용 요약
+    issue_type: str                  # "new_issue", "ongoing_update", "resolved", "independent"
 
 
 class FeedbackState(TypedDict):
@@ -58,6 +63,7 @@ class FeedbackState(TypedDict):
     
     extracted_guideline: str         # LLM이 도출한 향후 오분류 방지용 일반화 가이드라인 (Few-shot용)
     validation_result: str           # "Valid", "Merge", "Conflict" (RAG Poisoning 방지용 검증 결과)
+    conflicting_doc_ids: List[str]   # 충돌하는 과거 가이드라인 ID 배열
 
 
 class MemoryGCState(TypedDict):

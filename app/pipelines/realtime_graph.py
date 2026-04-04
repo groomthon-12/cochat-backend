@@ -21,6 +21,9 @@ class AnalyzeMessageOutput(BaseModel):
     judgment_rationale: str = Field(description="선택한 긴급도에 대한 상세한 논리적 판단 근거 (Chain of Thought)")
     should_store: bool = Field(description="의미 있는 업무 컨텍스트 혹은 중요 로그로써 추후 Vector DB에 기억할 가치가 있는가?")
     storable_summary: str = Field(description="should_store가 True인 경우 검색용 필수 핵심 요약. False인 경우 빈 문자열.")
+    issue_type: Literal["new_issue", "ongoing_update", "resolved", "independent"] = Field(
+        description="이 메시지의 맥락 유형. (새 장애발생=new_issue, 기존 장애 진행=ongoing_update, 장애 해결/조치완료=resolved, 단발성/독립적 정보=independent)"
+    )
 
 class ReassessOutput(BaseModel):
     final_urgency: Literal["Emergency", "High", "Normal", "Low"] = Field(
@@ -28,7 +31,7 @@ class ReassessOutput(BaseModel):
     )
     judgment_rationale: str = Field(description="긴급도를 이와 같이 판단하게 된 이유 혹은 변경 사유 (핵심만 간결하게)")
 
-def analyze_message(state: MessageState) -> dict:
+async def analyze_message(state: MessageState) -> dict:
     """1차 긴급도 및 저장 가치 판단 (Gemini Flash 사용)"""
     
     # 1. 모델과 파서 초기화 (실제 실행을 위해선 GOOGLE_API_KEY 환경변수 세팅 필수)
@@ -43,9 +46,11 @@ def analyze_message(state: MessageState) -> dict:
                    "- High: 수신자(나)를 직접 멘션한 중요한 업무 요청, 빠른 확인이 필요한 이슈 및 오류 알림.\n"
                    "- Normal: 평범한 채널의 정보성 알림, 당장 조치할 필요 없는 배포 로그, 단순 참조용 스레드.\n"
                    "- Low: 단순 인사(안녕하세요), 동의/수긍('네 알겠습니다', '확인했습니다'), 잡담, 스팸 봇 메시지.\n\n"
-                   "제공된 메타데이터(직접 멘션 여부 등)와 단기 스레드 문맥, 그리고 메시지 본문을 가장 입체적으로 분석하여 JSON으로 반환하세요."
+                   "[이슈 타입 분류 가이드라인]\n"
+                   "제공된 스레드 문맥을 보고 이 메시지가 장애나 작업의 '새로운 시작(new_issue)'인지, '진행 중인 상황 공유(ongoing_update)'인지, '최종 해결 및 조치 완료(resolved)'인지 판단하세요. 앞뒤 맥락이 없는 일회성 알림은 'independent' 입니다.\n\n"
+                   "제공된 메타데이터와 본문을 가장 입체적으로 분석하여 JSON으로 반환하세요."
         ),
-        ("user", "### 메타데이터 (채널, 발신자, 나를 멘션했는지 여부 등):\n{metadata}\n\n"
+        ("user", "### 메타데이터:\n{metadata}\n\n"
                  "### 최근 스레드 문맥 (단기 기억):\n{history}\n\n"
                  "### 현재 메시지 본문:\n{content}")
     ])
@@ -53,7 +58,7 @@ def analyze_message(state: MessageState) -> dict:
     # 3. 모델 체인지업(Invocation)
     chain = prompt | structured_llm
     
-    result = chain.invoke({
+    result = await chain.ainvoke({
         "metadata": state.get("metadata", {}),
         "history": state.get("conversation_history", []),
         "content": state.get("content", "")
@@ -62,10 +67,11 @@ def analyze_message(state: MessageState) -> dict:
     # 4. 분석 결과 반환
     return {
         "initial_urgency": result.initial_urgency,
-        "final_urgency": result.initial_urgency, # RAG를 거치지 않고 끝나는 Low 케이스를 위한 예비용
+        "final_urgency": result.initial_urgency,
         "judgment_rationale": result.judgment_rationale,
         "should_store": result.should_store,
-        "storable_summary": result.storable_summary 
+        "storable_summary": result.storable_summary,
+        "issue_type": result.issue_type
     }
 
 async def fast_retrieve_emergency_context(state: MessageState) -> dict:
@@ -140,19 +146,68 @@ async def deep_retrieve_context(state: MessageState) -> dict:
     contexts = [doc.get("content", "") for doc in reranked_docs]
     return {"retrieved_context": contexts}
 
+class IssueMatchOutput(BaseModel):
+    matched_id: str = Field(description="일치하는 진행 중 이슈의 ID. 일치하는 것이 없으면 'none'")
+    reason: str = Field(description="판단 사유")
+
 async def store_vector_db(state: MessageState) -> dict:
-    """(should_store=True) 임베딩하여 Vector DB에 장기 기억으로 저장"""
+    """(should_store=True) 임베딩하여 Vector DB에 장기 기억으로 저장 (Issue 상태 추적 및 Upsert)"""
     summary = state.get("storable_summary")
-    if summary:
-        from app.pipelines.shared.retriever_utils import astore_document_to_vector_db
-        await astore_document_to_vector_db(
-            content=summary, 
-            metadata={
-                "message_id": state.get("message_id"), 
-                "urgency": state.get("final_urgency"),
-                "source": "realtime_summary"
-            }
-        )
+    if not summary:
+        return {}
+        
+    from app.pipelines.shared.retriever_utils import astore_document_to_vector_db, afetch_ongoing_memories_by_channel
+    
+    metadata = state.get("metadata", {})
+    channel_id = metadata.get("channel_id")
+    issue_type = state.get("issue_type", "independent")
+    
+    # 1. 이슈 상태 매핑
+    final_status = "resolved" if issue_type == "resolved" else "ongoing" if issue_type in ["new_issue", "ongoing_update"] else "none"
+    
+    # 기본 저장용 메타데이터 구성
+    store_meta = {
+        "message_id": state.get("message_id"), 
+        "urgency": state.get("final_urgency"),
+        "source": "realtime_summary",
+        "issue_status": final_status,
+        "occurred_at": metadata.get("occurred_at"),
+        "workspace_id": metadata.get("workspace_id"),
+        "channel_id": channel_id,
+        "sender_id": metadata.get("sender_id")
+    }
+
+    # 2. 기존 Ongoing 이슈에 달리는 후속 조치/해결 메시지인 경우 매칭 (Entity Resolution)
+    if issue_type in ["ongoing_update", "resolved"] and channel_id:
+        ongoing_mems = await afetch_ongoing_memories_by_channel(channel_id)
+        if ongoing_mems:
+            mem_str = "\n".join([f"- [ID: {m['id']}] {m['content']}" for m in ongoing_mems])
+            
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+            structured_llm = llm.with_structured_output(IssueMatchOutput)
+            prompt = ChatPromptTemplate.from_template(
+                "당신은 이슈 해결 추적 시스템입니다. 방금 들어온 [새로운 메시지 요약]이 현재 같은 채널에서 진행 중인 [과거 이슈 목록] 중 어떤 것의 후속 대화인지 심사하세요.\n"
+                "[새로운 메시지 요약]: {summary}\n\n[진행 중인 과거 이슈 목록]:\n{mem_str}\n\n"
+                "일치하는 이슈가 있다면 해당 ID를, 일치하는 게 전혀 없다면 'none'을 반환하세요."
+            )
+            try:
+                match_res = await (prompt | structured_llm).ainvoke({"summary": summary, "mem_str": mem_str})
+                if match_res.matched_id != "none":
+                    # 매칭 성공: 기존 문서에 텍스트 덧붙이기(Merge) 후 Upsert
+                    matched_mem = next((m for m in ongoing_mems if m["id"] == match_res.matched_id), None)
+                    if matched_mem:
+                        merged_content = f"{matched_mem['content']}\n\n[업데이트]: {summary}"
+                        # 기존 문서의 message_id(고유식별자)를 재사용하여 Upsert 기동
+                        store_meta["message_id"] = matched_mem["id"]
+                        
+                        await astore_document_to_vector_db(content=merged_content, metadata=store_meta)
+                        print(f"🔄 [이슈 병합 성공] 기존 메모리({matched_mem['id']})에 새 진행사항 업데이트 완료. 상태: {final_status}")
+                        return {}
+            except Exception as e:
+                print(f"⚠️ 이슈 매칭 중 오류 발생: {e}")
+
+    # 3. 매칭 실패 혹은 신규 이슈인 경우 (순수 Insert)
+    await astore_document_to_vector_db(content=summary, metadata=store_meta)
     return {}
 
 # ==============================================================================

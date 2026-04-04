@@ -1,25 +1,80 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
+from pydantic import BaseModel, Field
+from typing import Literal, List
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 from app.pipelines.state import MemoryGCState
+from app.pipelines.shared.retriever_utils import afetch_stale_memories_from_db, adelete_documents_from_vector_db
+
+# ==============================================================================
+# Pydantic Schemas for Output Parsing
+# ==============================================================================
+
+class MemoryEvaluation(BaseModel):
+    id: str = Field(description="메모리의 원본 문서 ID")
+    action: Literal["keep", "delete"] = Field(description="메모리 보존(keep) 또는 삭제(delete) 결정")
+    reason: str = Field(description="그러한 결정을 내린 짧은 논리적 이유")
+
+class EvaluatorOutput(BaseModel):
+    evaluations: List[MemoryEvaluation] = Field(description="메모리 배열 각각에 대한 평가 결과 리스트")
 
 # ==============================================================================
 # Node Functions
 # ==============================================================================
 
-def fetch_stale_memories(state: MemoryGCState) -> dict:
-    """일정 기간 경과했거나 중요도가 떨어진 낡은 임베딩을 Vector DB에서 조회"""
-    # TODO: Vector DB Query
-    return {"target_memories": [{"id": "vec123", "content": "과거 알림", "date": "2026-02-01"}]}
+async def fetch_stale_memories(state: MemoryGCState) -> dict:
+    """오래된 임베딩(시간순 가장 과거 데이터)을 Vector DB에서 조회"""
+    memories = await afetch_stale_memories_from_db(limit=5)
+    return {"target_memories": memories}
 
-def evaluate_memory_relevance(state: MemoryGCState) -> dict:
-    """LLM이 현재 시점 기준으로 메모리의 유효성을 평가 (유지/강등/삭제)"""
-    # TODO: Batch LLM 호출 (병렬 처리 권장)
-    return {"evaluation_results": [{"id": "vec123", "action": "delete", "reason": "이슈 해결됨"}]}
+async def evaluate_memory_relevance(state: MemoryGCState) -> dict:
+    """LLM이 현재 시점 기준으로 메모리의 유효성을 평가 (유지/삭제)"""
+    targets = state.get("target_memories", [])
+    if not targets:
+        return {"evaluation_results": []}
 
-def update_or_delete_vector_db(state: MemoryGCState) -> dict:
-    """평가 결과에 따라 Vector DB의 임베딩 삭제 또는 메타데이터 가중치 하락 연산"""
-    # TODO: Delete/Update 쿼리 실행
+    # 메모리 목록을 하나의 문자열로 결합 (Batch 처리를 위해)
+    memories_str = ""
+    for idx, mem in enumerate(targets):
+        memories_str += f"[Index: {idx}] - [ID: {mem['id']}]\n"
+        memories_str += f"Content: {mem['content']}\n"
+        memories_str += f"Occurred_at: {mem.get('metadata', {}).get('occurred_at', 'N/A')}\n"
+        memories_str += "-" * 50 + "\n"
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "당신은 Vector DB 메모리 가비지 컬렉터(GC)입니다.\n"
+                   "제공된 과거 시스템 알림이나 로그 요약 목록을 읽고, 각각을 장기기억에 계속 유지('keep')할지, 아니면 가치가 소멸하여 파괴('delete')할지 결정하세요.\n"
+                   "[삭제(delete) 기준]: 시간이 지나면 잊혀져도 되는 단발성 타임아웃, 임의 해결된 일반 알림, 당장 해결된 단순 버그 로그.\n"
+                   "[유지(keep) 기준]: 심각한 시스템 장애나 보안 이슈로 기록에 남길 가치가 있거나, 아키텍처적 결함, SOP(표준 운영 절차) 등 지속적으로 언젠가 참조할 가능성이 있는 지식정보."
+        ),
+        ("user", "### 평가 대상 메모리 목록:\n{memories_str}")
+    ])
+    
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+    structured_llm = llm.with_structured_output(EvaluatorOutput)
+    
+    try:
+        response = await (prompt | structured_llm).ainvoke({"memories_str": memories_str})
+        # Pydantic 객체를 dict 형식으로 변환 후 상태에 저장
+        results = [{"id": item.id, "action": item.action, "reason": item.reason} for item in response.evaluations]
+        return {"evaluation_results": results}
+    except Exception as e:
+        print(f"⚠️ LLM GC 주기 평가 실패: {e}")
+        return {"evaluation_results": []}
+
+async def update_or_delete_vector_db(state: MemoryGCState) -> dict:
+    """평가 결과에 따라 Vector DB의 임베딩 삭제 연산"""
+    evaluations = state.get("evaluation_results", [])
+    delete_ids = [item["id"] for item in evaluations if item["action"] == "delete"]
+    
+    if delete_ids:
+        success = await adelete_documents_from_vector_db(delete_ids)
+        if success:
+            print(f"🗑️ [GC 완료] 총 {len(delete_ids)}개의 데이터 영구 삭제 통과 (IDs: {delete_ids})")
+            
     return {}
 
 # ==============================================================================
