@@ -92,10 +92,11 @@ async def fetch_short_term_memory(channel_id: str) -> List[str]:
                 # DB의 결과는 최신순(occurred_at.desc()).
                 # Redis의 구조는 인덱스 0이 가장 최신, 그 뒤로 과거 데이터가 이어지는 구조(LPUSH).
                 # RPUSH에 최신부터 순서대로(notifications) 밀어넣으면, 인덱스 0이 알맞게 최신 메시지가 됨.
-                messages = [
-                    f"[{n.sender_name or 'Unknown'}]: {n.original_text or ''}"
-                    for n in notifications
-                ]
+                messages = []
+                for n in notifications:
+                    body = n.rich_contents if n.rich_contents else (n.original_text or "")
+                    messages.append(f"[{n.sender_name or 'Unknown'}]: {body}")
+                
                 await client.rpush(key, *messages)
                 print(f"✅ RDB에서 {len(messages)}개의 메시지를 Redis로 복원 완료!")
             else:

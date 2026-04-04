@@ -31,9 +31,10 @@ async def run_pipeline_with_memory(event: NotificationEvent) -> Notification:
     if channel_id:
         recent_history = await fetch_short_term_memory(channel_id)
         
-    # 2. 이번 메시지 문자열 깔끔하게 포매팅
+    # 2. 이번 메시지 문자열 깔끔하게 포매팅 (rich_contents가 있으면 우선 사용, 없으면 original_text)
     sender = event.sender_name or "Unknown"
-    formatted_current_msg = f"[{sender}]: {event.original_text}"
+    text_to_store = event.rich_contents if event.rich_contents else event.original_text
+    formatted_current_msg = f"[{sender}]: {text_to_store}"
 
     # 3. LangGraph 초기 상태(State) 구성
     metadata = {
@@ -53,7 +54,7 @@ async def run_pipeline_with_memory(event: NotificationEvent) -> Notification:
     
     initial_state = {
         "message_id": event.provider_object_id,
-        "content": event.original_text,
+        "content": text_to_store, # LLM도 풍부한 텍스트를 인풋으로 받음
         "metadata": metadata,
         "conversation_history": recent_history
     }
@@ -88,6 +89,7 @@ async def run_pipeline_with_memory(event: NotificationEvent) -> Notification:
         provider_object_id=event.provider_object_id,
         title=event.title,
         original_text=event.original_text,
+        rich_contents=event.rich_contents,
         content_preview=content_preview,
         source_url=event.source_url,
         sender_name=event.sender_name,
