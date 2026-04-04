@@ -101,12 +101,88 @@ Response:
 }
 ```
 
+## List accessible Slack conversations
+
+Frontend request:
+
+```http
+GET /api/v1/integrations/slack/conversations?integration_id=1&limit=100
+X-Cochat-User-Id: 123
+```
+
+Response:
+
+```json
+{
+  "integration_id": 1,
+  "count": 2,
+  "conversations": [
+    {
+      "channel_id": "C0123456789",
+      "channel_type": "channel",
+      "is_im": false,
+      "is_mpim": false,
+      "is_private": false,
+      "display_name": "general",
+      "name": "general"
+    },
+    {
+      "channel_id": "D0123456789",
+      "channel_type": "im",
+      "is_im": true,
+      "is_mpim": false,
+      "is_private": false,
+      "display_name": "Jane Doe",
+      "name": null
+    }
+  ]
+}
+```
+
+Use this response to render the user's selectable Slack conversation list in the UI.
+
+## Sync one conversation into raw events
+
+Frontend request:
+
+```http
+POST /api/v1/integrations/slack/sync
+X-Cochat-User-Id: 123
+Content-Type: application/json
+
+{
+  "integration_id": 1,
+  "channel_id": "C0123456789",
+  "limit": 30
+}
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "integration_id": 1,
+  "channel_id": "C0123456789",
+  "processed_messages": 30,
+  "raw_event_ids": [101, 102, 103],
+  "provider_event_ids": [
+    "C0123456789:1712345678.000100",
+    "C0123456789:1712345679.000200"
+  ]
+}
+```
+
+This endpoint reads recent Slack messages with the connected user's token and stores the original messages as `raw_events`.
+
 ## What the frontend must do
 
 - Know the current application user id
 - Send `X-Cochat-User-Id` when requesting the Slack OAuth URL
 - Redirect the browser to the returned Slack OAuth URL
 - After callback success, refresh the connection status from the backend
+- Load accessible conversations for the connected integration
+- Ask the backend to sync the selected conversation into `raw_events`
 
 ## What the frontend does not need to do
 
