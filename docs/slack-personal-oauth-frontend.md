@@ -102,6 +102,28 @@ This is the current end-to-end flow for:
 - store selected Slack messages as `raw_events`
 - disconnect Slack later if needed
 
+## Multi-account behavior
+
+The current user can connect more than one Slack account.
+
+- Each connection is stored as a separate `integration_id`
+- The backend distinguishes connections with:
+  - `integration_id`
+  - `slack_team_id`
+  - `slack_user_id`
+- Raw events from different Slack accounts are separated by `integration_id`
+
+This means the frontend should treat `connected=true` as:
+
+- at least one Slack account is connected
+- more Slack accounts can still be added
+
+Recommended UI:
+
+- show the connected Slack account list
+- keep a `Connect another Slack account` action available
+- let the user sync one account or all connected accounts
+
 ## Connection status check
 
 Frontend request:
@@ -225,6 +247,96 @@ Response:
 ```
 
 This endpoint reads recent Slack messages with the connected user's token and stores the original messages as `raw_events`.
+
+## Sync all connected Slack accounts
+
+Frontend request:
+
+```http
+POST /api/v1/integrations/slack/sync-all
+X-Cochat-User-Id: 123
+Content-Type: application/json
+
+{
+  "conversation_limit": 50,
+  "message_limit": 30
+}
+```
+
+Optional:
+
+- `integration_ids`: restrict syncing to selected Slack accounts only
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "user_id": 123,
+  "integration_count": 2,
+  "processed_messages": 84,
+  "integrations": [
+    {
+      "integration_id": 1,
+      "account_name": "Workspace A",
+      "slack_team_id": "T...",
+      "slack_user_id": "U...",
+      "conversation_count": 12,
+      "processed_messages": 40
+    },
+    {
+      "integration_id": 2,
+      "account_name": "Workspace B",
+      "slack_team_id": "T...",
+      "slack_user_id": "U...",
+      "conversation_count": 9,
+      "processed_messages": 44
+    }
+  ]
+}
+```
+
+Use this endpoint when the product wants one refresh action to collect messages from all connected Slack accounts.
+
+## Read merged raw events across connected Slack accounts
+
+Frontend request:
+
+```http
+GET /api/v1/integrations/slack/raw-events?limit=100
+X-Cochat-User-Id: 123
+```
+
+Optional:
+
+- `integration_ids=1&integration_ids=2` to restrict the merged view to selected accounts
+
+Response:
+
+```json
+{
+  "user_id": 123,
+  "count": 2,
+  "raw_events": [
+    {
+      "id": 301,
+      "integration_id": 1,
+      "provider_event_id": "C...:1712345678.000100",
+      "event_type": "message",
+      "received_at": "2026-04-05T10:00:00+00:00",
+      "account_name": "Workspace A",
+      "account_identifier": "T...:U...",
+      "slack_team_id": "T...",
+      "slack_user_id": "U...",
+      "payload": {
+        "text": "hello"
+      }
+    }
+  ]
+}
+```
+
+This merged view is the main backend response for showing one user's messages from multiple Slack accounts in a single UI.
 
 ## How to verify external integration
 
