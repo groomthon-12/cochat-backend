@@ -81,3 +81,44 @@ async def sync_conversation_raw_events(
         "raw_event_ids": raw_event_ids,
         "provider_event_ids": provider_event_ids,
     }
+
+
+async def sync_accessible_conversations(
+    db: AsyncSession,
+    integration_id: int,
+    access_token: str,
+    conversation_limit: int = 100,
+    message_limit: int = 30,
+) -> dict:
+    """Sync recent messages from all accessible conversations for one Slack integration."""
+    conversations = await list_accessible_conversations(
+        access_token=access_token,
+        limit=conversation_limit,
+    )
+
+    synced_conversations: list[dict] = []
+    total_messages = 0
+
+    for conversation in conversations:
+        result = await sync_conversation_raw_events(
+            db=db,
+            integration_id=integration_id,
+            access_token=access_token,
+            channel_id=conversation["channel_id"],
+            limit=message_limit,
+        )
+        total_messages += result["processed_messages"]
+        synced_conversations.append({
+            "channel_id": conversation["channel_id"],
+            "display_name": conversation["display_name"],
+            "channel_type": conversation["channel_type"],
+            "processed_messages": result["processed_messages"],
+            "raw_event_ids": result["raw_event_ids"],
+        })
+
+    return {
+        "integration_id": integration_id,
+        "conversation_count": len(conversations),
+        "processed_messages": total_messages,
+        "conversations": synced_conversations,
+    }
