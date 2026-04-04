@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL")
     ASYNC_DATABASE_URL: str = os.getenv("ASYNC_DATABASE_URL")
     REDIS_URL: str = os.getenv("REDIS_URL")
+    MASTER_USER_ID: int = 1
 
     # Discord
     DISCORD_BOT_TOKEN: str = ""

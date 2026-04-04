@@ -6,12 +6,14 @@ from app.models.integration_account import IntegrationAccount
 from app.models.integration_token import IntegrationToken
 from app.models.notification import Notification
 from app.models.raw_event import RawEvent
+from app.models.user import User
 
 __all__ = [
     "IntegrationAccount",
     "IntegrationToken",
     "RawEvent",
     "Notification",
+    "User",
     "FocusSession",
     "Briefing",
     "BriefingNotification",
