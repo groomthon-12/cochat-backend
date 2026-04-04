@@ -46,6 +46,8 @@ class CoChatDiscordBot(discord.Client):
             "attachments": [str(a.url) for a in message.attachments],
             "mentions": [str(u.id) for u in message.mentions],
             "mention_everyone": message.mention_everyone,
+            # 스레드 감지용 — Discord에서 스레드는 별도 채널(public_thread 등)로 처리됨
+            "channel_type": str(message.channel.type),
         }
 
         logger.debug("Discord 메시지 수신: %s", payload)
@@ -82,8 +84,8 @@ class CoChatDiscordBot(discord.Client):
                 )
                 logger.info("NotificationEvent 생성: provider=%s integration_id=%s raw_event_id=%s", event.provider, event.integration_id, event.raw_event_id)
 
-                # TODO: worker enqueue 연결 시 활성화
-                # await enqueue_notification(event)
+                # TODO: AI 파이프라인 연결 시 활성화
+                # await process_notification(event)
 
 
 async def start_gateway() -> asyncio.Task:

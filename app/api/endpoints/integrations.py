@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import get_db
 from app.integrations.discord.client import DiscordRestClient
+from app.integrations.slack.client import SlackClient
 from app.repositories.integration_repository import get_or_create_integration, upsert_token
 
 router = APIRouter(tags=["integrations"])
@@ -26,14 +27,67 @@ def list_integrations():
 
 @router.get("/integrations/slack/oauth-url")
 def get_slack_oauth_url():
-    """Slack OAuth 인증 URL 반환"""
-    return {"url": ""}
+    """Slack OAuth 인증 URL 반환."""
+    scopes = "channels:history,channels:read,chat:write,im:history,im:read,users:read"
+    params = urlencode({
+        "client_id": settings.SLACK_CLIENT_ID,
+        "scope": scopes,
+        "redirect_uri": settings.SLACK_REDIRECT_URI,
+    })
+    url = f"https://slack.com/oauth/v2/authorize?{params}"
+    return {"url": url}
 
 
 @router.get("/integrations/slack/callback")
-def slack_oauth_callback(code: str = "", state: str = ""):
-    """Slack OAuth 콜백 처리"""
-    return {"status": "ok"}
+async def slack_oauth_callback(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Slack OAuth 콜백 처리.
+
+    1. code → Bot Token 교환
+    2. 워크스페이스 정보 추출
+    3. IntegrationAccount + IntegrationToken DB 저장
+    """
+    client = SlackClient(bot_token="")  # code 교환은 토큰 불필요
+
+    try:
+        token_data = await client.exchange_code(
+            code=code,
+            client_id=settings.SLACK_CLIENT_ID,
+            client_secret=settings.SLACK_CLIENT_SECRET,
+            redirect_uri=settings.SLACK_REDIRECT_URI,
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Slack 인증 코드 교환에 실패했습니다.")
+
+    access_token: str = token_data.get("access_token", "")
+    team: dict = token_data.get("team", {})
+    team_id: str = team.get("id", "")
+    team_name: str = team.get("name", team_id)
+
+    if not team_id:
+        raise HTTPException(status_code=400, detail="워크스페이스 정보를 찾을 수 없습니다.")
+
+    async with db.begin():
+        integration = await get_or_create_integration(
+            db=db,
+            provider="slack",
+            account_identifier=team_id,
+            account_name=team_name,
+        )
+        await upsert_token(
+            db=db,
+            integration_id=integration.id,
+            access_token=access_token,
+        )
+
+    return {
+        "status": "ok",
+        "integration_id": integration.id,
+        "team_id": team_id,
+        "team_name": team_name,
+    }
 
 
 # ---------------------------------------------------------------------------
