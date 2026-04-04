@@ -1,0 +1,131 @@
+import os
+from typing import List, Dict, Any
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_core.documents import Document
+from langchain_postgres.vectorstores import PGVector
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+
+_async_engine: AsyncEngine = None
+
+def _get_async_engine() -> AsyncEngine:
+    global _async_engine
+    if _async_engine is None:
+        db_url = os.getenv("DATABASE_URL", "postgresql://cochat:cochat_dev@localhost:5432/cochat")
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        elif db_url.startswith("postgresql+asyncpg://"):
+            db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+        _async_engine = create_async_engine(db_url)
+    return _async_engine
+
+def _get_vector_store() -> PGVector:
+    """공용 PGVector 인스턴스 반환 함수"""
+    engine = _get_async_engine()
+    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
+    
+    return PGVector(
+        embeddings=embeddings,
+        collection_name="message_guidelines",
+        connection=engine,
+        use_jsonb=True,
+    )
+
+async def astore_document_to_vector_db(content: str, metadata: dict = None) -> bool:
+    """텍스트 내용을 Vector DB에 삽입 (비동기)"""
+    if not content:
+        return False
+        
+    try:
+        vector_store = _get_vector_store()
+        meta = metadata or {}
+        doc = Document(page_content=content, metadata=meta)
+        
+        # message_id가 있으면 명시적 id 리스트 생성 (Upsert로 동작하게 됨)
+        msg_id = meta.get("message_id")
+        doc_ids = [str(msg_id)] if msg_id else None
+        
+        await vector_store.aadd_documents([doc], ids=doc_ids)
+        return True
+    except Exception as e:
+        print(f"⚠️ Vector DB 저장 실패: {e}")
+        return False
+
+def compute_rrf(dense_results: List[Dict[str, Any]], sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
+    """
+    Reciprocal Rank Fusion (RRF) 알고리즘을 이용해 두 검색 결과를 융합합니다.
+    
+    Args:
+        dense_results: [{"id": "문서고유ID", "content": "문서내용", "score": float}, ...]
+        sparse_results: [{"id": "문서고유ID", "content": "문서내용", "score": float}, ...]
+        k: RRF 하이퍼파라미터 (일반적으로 60 사용 권장)
+    Returns:
+        fused_results: RRF Score 기준으로 정렬된 통합 문서 리스트
+    """
+    rrf_scores = {}
+    doc_lookup = {}
+    
+    # 1. 밀집(Dense) 벡터 순위에 따른 점수 합산
+    for rank, doc in enumerate(dense_results, start=1):
+        doc_id = doc.get("id")
+        if not doc_id:
+            continue
+        doc_lookup[doc_id] = doc
+        rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank)
+        
+    # 2. 희소(Sparse/BM25) 벡터 순위에 따른 점수 누적 합산
+    for rank, doc in enumerate(sparse_results, start=1):
+        doc_id = doc.get("id")
+        if not doc_id:
+            continue
+        doc_lookup[doc_id] = doc
+        rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank)
+        
+    # 3. 누적 점수 높은 순으로 최종 정렬
+    sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    # 4. 정렬된 ID를 바탕으로 결과 조립
+    fused_results = []
+    for doc_id, score in sorted_docs:
+        fused_doc = doc_lookup[doc_id].copy()
+        fused_doc["rrf_score"] = score
+        fused_results.append(fused_doc)
+        
+    return fused_results
+
+
+async def asearch_hybrid_rrf(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """하이브리드 검색 및 RRF 병합 수행 유틸리티 (실제 PostgreSQL pgvector 연결)"""
+    try:
+        # 공통 함수로 Vector DB 커넥션 획득
+        vector_store = _get_vector_store()
+        
+        # 비동기 검색 (Dense)
+        dense_docs = await vector_store.asimilarity_search_with_score(query, k=10)
+        dense_results = [
+            {"id": str(doc.metadata.get("id", i)), "content": doc.page_content, "score": score} 
+            for i, (doc, score) in enumerate(dense_docs)
+        ]
+    except Exception as e:
+        print(f"⚠️ Vector DB 조회 실패 (테이블이 비어있거나 생성되지 않음): {e}")
+        dense_results = []
+    
+    # 4. 희소(Sparse/BM25) 검색
+    # TODO: Postgres Full-Text Search(to_tsvector) 또는 로컬 ElasticSearch 연동
+    sparse_results = []
+    
+    # 5. RRF 융합 로직 태우기
+    if not dense_results and not sparse_results:
+        return []
+        
+    fused_results = compute_rrf(dense_results, sparse_results)
+    
+    return fused_results[:top_k]
+
+
+def search_cross_encoder_rerank(candidates: List[Dict[str, Any]], query: str, top_k: int = 2) -> List[Dict[str, Any]]:
+    """[High/Normal 전용] Cross-Encoder를 통한 정밀 재랭킹 (Mockup)"""
+    
+    # TODO: candidates 각 항목에 대해 query와의 Pair-wise 유사도를 Cross-Encoder 모델로 계산하여 재정렬
+    # reranked = cross_encoder.predict([(query, c["content"]) for c in candidates])
+    
+    return candidates[:top_k]
