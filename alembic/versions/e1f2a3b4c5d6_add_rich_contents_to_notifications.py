@@ -19,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('notifications', sa.Column('rich_contents', sa.Text(), nullable=True))
+    op.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS rich_contents TEXT")
 
 
 def downgrade() -> None:
