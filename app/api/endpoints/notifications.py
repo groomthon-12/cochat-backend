@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.models.notification import Notification
@@ -19,6 +20,7 @@ async def list_notifications(db: AsyncSession = Depends(get_db)):
     """알림 목록 조회"""
     result = await db.execute(
         select(Notification)
+        .options(selectinload(Notification.integration))
         .order_by(Notification.created_at.desc())
         .limit(100)
     )
@@ -40,8 +42,10 @@ async def list_notifications(db: AsyncSession = Depends(get_db)):
                 "priority": priority_map.get(n.priority, "low"),
                 "summary": n.summary or n.content_preview or n.title,
                 "actor": n.sender_name,
-                "channel": n.channel_name,
-                "provider": "discord" if "discord" in (n.source_type or "") else "slack",
+                "channel": n.channel_name or n.channel_id or "general",
+                "channelId": n.channel_id or "",
+                "workspaceId": n.integration.account_identifier if n.integration else "",
+                "provider": n.integration.provider if n.integration else "discord",
                 "status": n.status or "unread",
                 "createdAt": n.created_at.isoformat() if n.created_at else "",
             }

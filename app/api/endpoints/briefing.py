@@ -54,10 +54,13 @@ async def start_focus_session(
     async with db.begin():
         existing = await get_active_session(db, body.user_id)
         if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"이미 진행 중인 세션이 있습니다. (session_id={existing.id})",
-            )
+            return {
+                "session_id": existing.id,
+                "user_id": existing.user_id,
+                "planned_duration_minutes": existing.planned_duration_minutes,
+                "started_at": existing.started_at,
+                "status": existing.status,
+            }
 
         session = await create_focus_session(
             db=db,
