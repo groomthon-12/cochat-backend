@@ -131,8 +131,23 @@ def _parse_slack_oauth_state(state: str) -> dict:
 
 
 @router.get("/integrations")
-def list_integrations():
-    return {"integrations": []}
+async def list_integrations(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+    from app.models.integration_account import IntegrationAccount
+    result = await db.execute(select(IntegrationAccount).order_by(IntegrationAccount.created_at.desc()))
+    accounts = result.scalars().all()
+    return {
+        "integrations": [
+            {
+                "id": str(a.id),
+                "provider": a.provider,
+                "accountIdentifier": a.account_identifier,
+                "accountName": a.account_name,
+                "status": a.status,
+            }
+            for a in accounts
+        ]
+    }
 
 
 @router.get("/integrations/slack/oauth-url")
